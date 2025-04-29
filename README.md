@@ -25,6 +25,21 @@ Geri bildirim ve pull request'leri teşvik ediyoruz!
 
 ## 🛠️ Kurulum Talimatları
 
+### Kolay Kurulum (Önerilen)
+
+1. **SD Kartınızı Hazırlayın:**
+   - SD kartınıza Raspberry Pi OS kurmak için [Raspberry Pi Imager](https://www.raspberrypi.com/software/) kullanın.
+   - Gerektiğinde SSH'ı etkinleştirin, Wi-Fi ayarlayın ve ana bilgisayar adını yapılandırın.
+
+2. **Tek Komutla Kurulum:**
+   - Raspberry Pi'nize SSH ile bağlanın veya terminal açın ve aşağıdaki komutu çalıştırın:
+     ```bash
+     bash <(curl -s https://raw.githubusercontent.com/Teklojik-Elektronik/kiosk/main/kiosk_setup.sh)
+     ```
+   - Kurulum betiği, gerekli tüm bileşenleri otomatik olarak indirecek ve yapılandıracaktır.
+
+### Manuel Kurulum
+
 1. **SD Kartınızı Hazırlayın:**
    - SD kartınıza Raspberry Pi OS kurmak için [Raspberry Pi Imager](https://www.raspberrypi.com/software/) kullanın.
    - Gerektiğinde SSH'ı etkinleştirin, Wi-Fi ayarlayın ve ana bilgisayar adını yapılandırın.
