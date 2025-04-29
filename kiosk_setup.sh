@@ -1,8 +1,25 @@
-# labwc için otomatik başlatma betiği oluştur?
+#!/bin/bash
+
+# Geçerli kullanıcıyı belirle
+CURRENT_USER=$(whoami)
+
+# Kullanıcıya evet/hayır sorusu soran fonksiyon
+ask_user() {
+    local prompt="$1"
+    while true; do
+        read -p "$prompt [e/h]: " yn
+        case $yn in
+            [Ee]* ) return 0;;  # Evet için 0 (başarılı) dön
+            [Hh]* ) return 1;;  # Hayır için 1 (başarısız) dön
+            * ) echo "Lütfen e veya h yazın.";;
+        esac
+    done
+}
+
 echo
 if ask_user "Labwc için otomatik başlatma (chromium) betiği oluşturmak ister misiniz?"; then
     # Kullanıcıdan varsayılan URL iste
-    read -p "Chromium'da açmak için URL'yi girin [varsayılan: https://webglsamples.org...]: " USER_URL
+    read -p "Chromium'da açmak için URL'yi girin [varsayılan: https://webglsamples.org/aquarium/aquarium.html]: " USER_URL
     USER_URL="${USER_URL:-https://webglsamples.org/aquarium/aquarium.html}"
     
     # Ek Chromium parametreleri için sorular
@@ -73,7 +90,7 @@ if ask_user "Labwc için otomatik başlatma (chromium) betiği oluşturmak ister
     fi
     
     if [ "$TREAT_INSECURE" = true ] && [ -n "$INSECURE_ORIGIN" ]; then
-        CHROMIUM_CMD="$CHROMIUM_CMD --unsafely-treat-insecure-origin-as-secure=\"$INSECURE_ORIGIN\""
+        CHROMIUM_CMD="$CHROMIUM_CMD --unsafely-treat-insecure-origin-as-secure=$INSECURE_ORIGIN"
     fi
     
     # URL ekle
@@ -88,7 +105,7 @@ if ask_user "Labwc için otomatik başlatma (chromium) betiği oluşturmak ister
     # Chromium başlatma komutunu otomatik başlatma dosyasına ekle veya oluştur
     if grep -q "chromium" "$LABWC_AUTOSTART_FILE"; then
         # Mevcut Chromium satırını yeni komutla değiştir
-        sed -i '/chromium-browser/c\'"$CHROMIUM_CMD" "$LABWC_AUTOSTART_FILE"
+        sed -i "/chromium-browser/c\\$CHROMIUM_CMD" "$LABWC_AUTOSTART_FILE"
         echo -e "\e[32m✔\e[0m Mevcut Chromium komutu güncellendi."
     else
         echo -e "\e[90mChromium'u labwc otomatik başlatma betiğine ekleme...\e[0m"
