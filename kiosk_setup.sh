@@ -1,5 +1,41 @@
 #!/bin/bash
+# Raspberry Pi Kiosk Display System Kurulum Betiği
+# Kurulum için güncel bir Raspberry Pi OS Bookworm gereklidir.
+# Raspberry Pi 5 ve Raspberry Pi 4 üzerinde test edilmiştir.
+# Kolay kullanım için Raspberry Pi Imager kullanın. Wi-Fi, SSH ve hostname ayarlarını yapın.
+# SD kartınızı hazırlayın.
+# Bu betiği çalışan Raspberry Pi sisteminize kopyalayın ve root olmayan bir kullanıcı olarak çalıştırın:
+# bash kiosk_setup.sh
+# Sürüm Geçmişi
+# 2024-10-22 v1.0: İlk sürüm
+# 2024-11-04 v1.1: Wayfire'dan labwc'ye geçiş
+# 2024-11-13 v1.2: wlr-randr kurulumu eklendi
+# 2024-11-20 v1.3: Chromium için detaylı yapılandırma seçenekleri eklendi
 
+# Ek mesaj ile spinner görüntüleme fonksiyonu
+spinner() {
+    local pid=$1  # Arka plan işleminin PID'sini al
+    local message=$2  # Spinner ile gösterilecek mesajı al
+    local delay=0.1
+    local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")  # spinner kareleri
+    tput civis  # İmleci gizle
+    local i=0
+    while [ -d /proc/$pid ]; do  # İşlemin hala çalışıp çalışmadığını kontrol et
+        local frame=${frames[$i]}
+        printf "\r\e[35m%s\e[0m %s" "$frame" "$message"  # Spinner karesini mesajla birlikte yazdır
+        i=$(((i + 1) % ${#frames[@]}))
+        sleep $delay
+    done
+    printf "\r\e[32m✔\e[0m %s\n" "$message"  # İşlem tamamlandığında yeşil onay işareti göster
+    tput cnorm  # İmleci geri getir
+}
+
+# Betiğin root olarak çalıştırılıp çalıştırılmadığını kontrol et, doğruysa çık
+if [ "$(id -u)" -eq 0 ]; then
+    echo "Bu betik root olarak çalıştırılmamalıdır. Lütfen sudo yetkilerine sahip normal bir kullanıcı olarak çalıştırın."
+    exit 1
+fi
+    
 # Geçerli kullanıcıyı belirle
 CURRENT_USER=$(whoami)
 
@@ -16,6 +52,69 @@ ask_user() {
     done
 }
 
+# Paket listesini güncellemek ister misiniz?
+echo
+if ask_user "Paket listesini güncellemek ister misiniz?"; then
+    echo -e "\e[90mPaket listesi güncelleniyor, lütfen bekleyin...\e[0m"
+    sudo apt update > /dev/null 2>&1 &
+    spinner $! "Paket listesi güncelleniyor..."
+fi
+    
+# Kurulu paketleri yükseltmek ister misiniz?
+echo
+if ask_user "Kurulu paketleri yükseltmek ister misiniz?"; then
+    echo -e "\e[90mKurulu paketler yükseltiliyor. BU BİRAZ ZAMAN ALABİLİR, lütfen bekleyin...\e[0m"
+    sudo apt upgrade -y > /dev/null 2>&1 &
+    spinner $! "Kurulu paketler yükseltiliyor..."
+fi
+    
+# Wayland/labwc paketlerini kurmak ister misiniz?
+echo
+if ask_user "Wayland ve labwc paketlerini kurmak ister misiniz?"; then
+    echo -e "\e[90mWayland paketleri kuruluyor, lütfen bekleyin...\e[0m"
+    sudo apt install --no-install-recommends -y labwc wlr-randr seatd > /dev/null 2>&1 &
+    spinner $! "Wayland paketleri kuruluyor..."
+fi
+    
+# Chromium tarayıcısını kurmak ister misiniz?
+echo
+if ask_user "Chromium tarayıcısını kurmak ister misiniz?"; then
+    echo -e "\e[90mChromium tarayıcısı kuruluyor, lütfen bekleyin...\e[0m"
+    sudo apt install --no-install-recommends -y chromium-browser > /dev/null 2>&1 &
+    spinner $! "Chromium tarayıcısı kuruluyor..."
+fi
+    
+# greetd kurmak ve yapılandırmak ister misiniz?
+echo
+if ask_user "Labwc otomatik başlatması için greetd kurmak ve yapılandırmak ister misiniz?"; then
+    # greetd kur
+    echo -e "\e[90mLabwc otomatik başlatması için greetd kuruluyor, lütfen bekleyin...\e[0m"
+    sudo apt install -y greetd > /dev/null 2>&1 &
+    spinner $! "greetd kuruluyor..."
+    
+    # /etc/greetd/config.toml oluştur veya üzerine yaz
+    echo -e "\e[90mconfig.toml oluşturuluyor veya üzerine yazılıyor...\e[0m"
+    sudo mkdir -p /etc/greetd
+    sudo bash -c "cat <<EOL > /etc/greetd/config.toml
+[terminal]
+vt = 7
+[default_session]
+command = \"/usr/bin/labwc\"
+user = \"$CURRENT_USER\"
+EOL"
+    echo -e "\e[32m✔\e[0m config.toml başarıyla oluşturuldu veya üzerine yazıldı!"
+    
+    # greetd servisini etkinleştir ve grafik hedefini ayarla
+    echo -e "\e[90mgreetd servisi etkinleştiriliyor...\e[0m"
+    sudo systemctl enable greetd > /dev/null 2>&1 &
+    spinner $! "greetd servisi etkinleştiriliyor..."
+    
+    echo -e "\e[90mVarsayılan olarak grafik hedefi ayarlanıyor...\e[0m"
+    sudo systemctl set-default graphical.target > /dev/null 2>&1 &
+    spinner $! "Grafik hedefi ayarlanıyor..."
+fi
+    
+# labwc için otomatik başlatma betiği oluşturmak ister misiniz?
 echo
 if ask_user "Labwc için otomatik başlatma (chromium) betiği oluşturmak ister misiniz?"; then
     # Kullanıcıdan varsayılan URL iste
@@ -58,10 +157,10 @@ if ask_user "Labwc için otomatik başlatma (chromium) betiği oluşturmak ister
     else
         USE_INCOGNITO=false
     fi
-    
+
     # Chromium komutunu oluştur
     CHROMIUM_CMD="/usr/bin/chromium-browser"
-    
+
     # Gizli mod parametresi
     if [ "$USE_INCOGNITO" = true ]; then
         CHROMIUM_CMD="$CHROMIUM_CMD --incognito"
@@ -118,3 +217,123 @@ if ask_user "Labwc için otomatik başlatma (chromium) betiği oluşturmak ister
     echo -e "\e[94mEklenen Chromium komutu:\e[0m"
     echo -e "\e[93m$CHROMIUM_CMD\e[0m"
 fi
+
+# Plymouth splash screen kurmak ister misiniz?
+echo
+if ask_user "Plymouth splash screen kurmak ister misiniz?"; then
+    # /boot/firmware/config.txt güncelle
+    CONFIG_TXT="/boot/firmware/config.txt"
+    if ! grep -q "disable_splash" "$CONFIG_TXT"; then
+        echo -e "\e[90m$CONFIG_TXT dosyasına disable_splash=1 ekleniyor...\e[0m"
+        sudo bash -c "echo 'disable_splash=1' >> $CONFIG_TXT"
+    else
+        echo -e "\e[33m$CONFIG_TXT zaten bir disable_splash seçeneği içeriyor. Değişiklik yapılmadı. Lütfen manuel olarak kontrol edin!\e[0m"
+    fi
+    
+    # /boot/firmware/cmdline.txt güncelle
+    CMDLINE_TXT="/boot/firmware/cmdline.txt"
+    if ! grep -q "splash" "$CMDLINE_TXT"; then
+        echo -e "\e[90m$CMDLINE_TXT dosyasına quiet splash plymouth.ignore-serial-consoles ekleniyor...\e[0m"
+        sudo sed -i 's/$/ quiet splash plymouth.ignore-serial-consoles/' "$CMDLINE_TXT"
+    else
+        echo -e "\e[33m$CMDLINE_TXT zaten splash seçenekleri içeriyor. Değişiklik yapılmadı. Lütfen manuel olarak kontrol edin!\e[0m"
+    fi
+    
+    # Plymouth ve temaları kur
+    echo -e "\e[90mPlymouth ve temaları kuruluyor...\e[0m"
+    sudo apt install -y plymouth plymouth-themes > /dev/null 2>&1 &
+    spinner $! "Plymouth kuruluyor..."
+    
+    # Kullanılabilir temaları listele ve bir diziye kaydet
+    echo -e "\e[90mKullanılabilir Plymouth temaları listeleniyor...\e[0m"
+    readarray -t THEMES < <(plymouth-set-default-theme -l)  # Temaları bir diziye kaydet
+    
+    # Kullanıcıdan bir tema seçmesini iste
+    echo -e "\e[94mLütfen bir tema seçin (numarayı girin):\e[0m"
+    select SELECTED_THEME in "${THEMES[@]}"; do
+        if [[ -n "$SELECTED_THEME" ]]; then
+            echo -e "\e[90mPlymouth teması $SELECTED_THEME olarak ayarlanıyor...\e[0m"
+            sudo plymouth-set-default-theme $SELECTED_THEME
+            sudo update-initramfs -u > /dev/null 2>&1 &
+            spinner $! "Initramfs güncelleniyor..."
+            echo -e "\e[32m✔\e[0m Plymouth splash screen $SELECTED_THEME teması ile kuruldu ve yapılandırıldı."
+            break
+        else
+            echo -e "\e[31mGeçersiz seçim, lütfen tekrar deneyin.\e[0m"
+        fi
+    done
+fi
+
+# Ekran çözünürlüğünü yapılandırmak ister misiniz?
+echo
+if ask_user "cmdline.txt ve labwc autostart dosyasında ekran çözünürlüğünü ayarlamak ister misiniz?"; then
+    # edid-decode kurulu mu kontrol et; değilse kur
+    if ! command -v edid-decode &> /dev/null; then
+        echo -e "\e[90mGerekli araç kuruluyor, lütfen bekleyin...\e[0m"
+        sudo apt install -y edid-decode > /dev/null 2>&1 &
+        spinner $! "edid-decode kuruluyor..."
+        echo -e "\e[32mGerekli araç başarıyla kuruldu!\e[0m"
+    fi
+    
+    # edid-decode komutunun çıktısını yakala
+    edid_output=$(sudo cat /sys/class/drm/card1-HDMI-A-1/edid | edid-decode)
+    
+    # Yenileme hızlarıyla biçimlendirilmiş çözünürlükleri saklamak için bir dizi başlat
+    declare -a available_resolutions=()
+    
+    # Satırları döngüye al ve çözünürlük ve yenileme hızlarıyla zamanlama ara
+    while IFS= read -r line; do
+        # Established, Standard veya Detailed Timings formatına sahip satırları eşleştir
+        if [[ "$line" =~ ([0-9]+)x([0-9]+)[[:space:]]+([0-9]+\.[0-9]+|[0-9]+)\ Hz ]]; then
+            resolution="${BASH_REMATCH[1]}x${BASH_REMATCH[2]}"
+            frequency="${BASH_REMATCH[3]}"
+            # "genişlikxyükseklik@frekansHz" olarak biçimlendir
+            formatted="${resolution}@${frequency}Hz"
+            available_resolutions+=("$formatted")
+        fi
+    done <<< "$edid_output"
+    
+    # Hiç çözünürlük bulunamazsa varsayılan listeye geri dön
+    if [ ${#available_resolutions[@]} -eq 0 ]; then
+        echo -e "\e[33mHiç çözünürlük bulunamadı. Varsayılan liste kullanılıyor.\e[0m"
+        available_resolutions=("1920x1080@60" "1280x720@60" "1024x768@60" "1600x900@60" "1366x768@60")
+    fi
+    
+    # Kullanıcıdan bir çözünürlük seçmesini iste
+    echo -e "\e[94mLütfen bir çözünürlük seçin (numarayı girin):\e[0m"
+    select RESOLUTION in "${available_resolutions[@]}"; do
+        if [[ -n "$RESOLUTION" ]]; then
+            echo -e "\e[32m$RESOLUTION seçtiniz\e[0m"
+            break
+        else
+            echo -e "\e[33mGeçersiz seçim, lütfen tekrar deneyin.\e[0m"
+        fi
+    done
+    
+    # Seçilen çözünürlüğü /boot/firmware/cmdline.txt dosyasına ekle (zaten yoksa)
+    CMDLINE_FILE="/boot/firmware/cmdline.txt"
+    if ! grep -q "video=" "$CMDLINE_FILE"; then
+        echo -e "\e[90m$CMDLINE_FILE dosyasına video=HDMI-A-1:$RESOLUTION ekleniyor...\e[0m"
+        sudo sed -i "1s/^/video=HDMI-A-1:$RESOLUTION /" "$CMDLINE_FILE"
+        echo -e "\e[32m✔\e[0m Çözünürlük cmdline.txt dosyasına başarıyla eklendi!"
+    else
+        echo -e "\e[33mcmdline.txt zaten bir video girişi içeriyor. Değişiklik yapılmadı.\e[0m"
+    fi
+    
+    # Komutu .config/labwc/autostart dosyasına ekle (zaten yoksa)
+    AUTOSTART_FILE="/home/$CURRENT_USER/.config/labwc/autostart"
+    if ! grep -q "wlr-randr --output HDMI-A-1 --mode $RESOLUTION" "$AUTOSTART_FILE"; then
+        echo "wlr-randr --output HDMI-A-1 --mode $RESOLUTION" >> "$AUTOSTART_FILE"
+        echo -e "\e[32m✔\e[0m Çözünürlük komutu labwc autostart dosyasına başarıyla eklendi!"
+    else
+        echo -e "\e[33mAutostart dosyası zaten bu çözünürlük komutunu içeriyor. Değişiklik yapılmadı.\e[0m"
+    fi
+fi
+
+# apt önbelleğini temizle
+echo -e "\e[90mapt önbellekleri temizleniyor, lütfen bekleyin...\e[0m"
+sudo apt clean > /dev/null 2>&1 &
+spinner $! "apt önbellekleri temizleniyor..."
+
+# Tamamlanma mesajını yazdır
+echo -e "\e[32m✔\e[0m \e[32mKurulum başarıyla tamamlandı! Lütfen sisteminizi yeniden başlatın.\e[0m"
