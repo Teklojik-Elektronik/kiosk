@@ -11,6 +11,7 @@
 # 2024-11-04 v1.1: Wayfire'dan labwc'ye geçiş
 # 2024-11-13 v1.2: wlr-randr kurulumu eklendi
 # 2024-11-20 v1.3: Chromium için detaylı yapılandırma seçenekleri eklendi
+# 2024-11-25 v1.4: Unclutter kurulumu eklendi
 
 # Ek mesaj ile spinner görüntüleme fonksiyonu
 spinner() {
@@ -82,6 +83,36 @@ if ask_user "Chromium tarayıcısını kurmak ister misiniz?"; then
     echo -e "\e[90mChromium tarayıcısı kuruluyor, lütfen bekleyin...\e[0m"
     sudo apt install --no-install-recommends -y chromium-browser > /dev/null 2>&1 &
     spinner $! "Chromium tarayıcısı kuruluyor..."
+fi
+
+# Unclutter kurmak ister misiniz?
+echo
+if ask_user "Fare imlecini gizlemek için unclutter kurmak ister misiniz?"; then
+    echo -e "\e[90mUnclutter kuruluyor, lütfen bekleyin...\e[0m"
+    sudo apt install -y unclutter > /dev/null 2>&1 &
+    spinner $! "Unclutter kuruluyor..."
+    
+    # Kullanıcıdan imlecin gizlenmesi için bekleme süresini iste
+    read -p "İmlecin gizlenmesi için kaç saniye hareketsiz kalması gerektiğini girin [varsayılan: 3]: " IDLE_TIME
+    IDLE_TIME="${IDLE_TIME:-3}"
+    
+    # Unclutter komutunu oluştur
+    UNCLUTTER_CMD="unclutter --timeout $IDLE_TIME &"
+    
+    # Komutu .config/labwc/autostart dosyasına ekle (zaten yoksa)
+    AUTOSTART_FILE="/home/$CURRENT_USER/.config/labwc/autostart"
+    mkdir -p "/home/$CURRENT_USER/.config/labwc"
+    
+    if ! grep -q "unclutter" "$AUTOSTART_FILE"; then
+        echo "$UNCLUTTER_CMD" >> "$AUTOSTART_FILE"
+        echo -e "\e[32m✔\e[0m Unclutter komutu labwc autostart dosyasına başarıyla eklendi!"
+    else
+        # Mevcut unclutter satırını yeni komutla değiştir
+        sed -i "/unclutter/c\\$UNCLUTTER_CMD" "$AUTOSTART_FILE"
+        echo -e "\e[32m✔\e[0m Mevcut unclutter komutu güncellendi."
+    fi
+    
+    echo -e "\e[32m✔\e[0m Unclutter başarıyla kuruldu ve yapılandırıldı. Fare imleci $IDLE_TIME saniye hareketsiz kaldıktan sonra gizlenecek."
 fi
     
 # greetd kurmak ve yapılandırmak ister misiniz?
