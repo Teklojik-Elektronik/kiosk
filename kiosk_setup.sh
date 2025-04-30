@@ -96,23 +96,50 @@ if ask_user "Fare imlecini gizlemek için unclutter kurmak ister misiniz?"; then
     read -p "İmlecin gizlenmesi için kaç saniye hareketsiz kalması gerektiğini girin [varsayılan: 3]: " IDLE_TIME
     IDLE_TIME="${IDLE_TIME:-3}"
     
-    # Unclutter komutunu oluştur
-    UNCLUTTER_CMD="unclutter --timeout $IDLE_TIME &"
+    # Unclutter komutunu oluştur - Wayland için ek parametreler ekle
+    UNCLUTTER_CMD="unclutter --timeout $IDLE_TIME --fork"
     
     # Komutu .config/labwc/autostart dosyasına ekle (zaten yoksa)
     AUTOSTART_FILE="/home/$CURRENT_USER/.config/labwc/autostart"
     mkdir -p "/home/$CURRENT_USER/.config/labwc"
     
-    if ! grep -q "unclutter" "$AUTOSTART_FILE"; then
-        echo "$UNCLUTTER_CMD" >> "$AUTOSTART_FILE"
-        echo -e "\e[32m✔\e[0m Unclutter komutu labwc autostart dosyasına başarıyla eklendi!"
-    else
+    # Dosyanın var olup olmadığını kontrol et ve unclutter satırını güncelle veya ekle
+    if [ -f "$AUTOSTART_FILE" ] && grep -q "unclutter" "$AUTOSTART_FILE" 2>/dev/null; then
         # Mevcut unclutter satırını yeni komutla değiştir
         sed -i "/unclutter/c\\$UNCLUTTER_CMD" "$AUTOSTART_FILE"
         echo -e "\e[32m✔\e[0m Mevcut unclutter komutu güncellendi."
+    else
+        # Dosya yoksa veya unclutter içermiyorsa, komutu ekle
+        echo "$UNCLUTTER_CMD" >> "$AUTOSTART_FILE"
+        echo -e "\e[32m✔\e[0m Unclutter komutu labwc autostart dosyasına başarıyla eklendi!"
     fi
     
-    echo -e "\e[32m✔\e[0m Unclutter başarıyla kuruldu ve yapılandırıldı. Fare imleci $IDLE_TIME saniye hareketsiz kaldıktan sonra gizlenecek."
+    # Ayrıca alternatif bir yöntem olarak wl-hide-cursor'ı da kuralım
+    echo -e "\e[90mWayland için alternatif fare gizleme aracı kuruluyor...\e[0m"
+    sudo apt install -y wl-hide-cursor > /dev/null 2>&1 || true
+    
+    # wl-hide-cursor komutunu da autostart dosyasına ekle
+    WL_HIDE_CMD="wl-hide-cursor -t $IDLE_TIME &"
+    if ! grep -q "wl-hide-cursor" "$AUTOSTART_FILE" 2>/dev/null; then
+        echo "$WL_HIDE_CMD" >> "$AUTOSTART_FILE"
+        echo -e "\e[32m✔\e[0m wl-hide-cursor komutu labwc autostart dosyasına başarıyla eklendi!"
+    fi
+    
+    # Ayrıca Chromium için imleç gizleme CSS'si oluştur
+    CHROMIUM_CSS_DIR="/home/$CURRENT_USER/.config/chromium-kiosk/Default/User StyleSheets"
+    mkdir -p "$CHROMIUM_CSS_DIR"
+    
+    # CSS dosyasını oluştur
+    cat > "$CHROMIUM_CSS_DIR/Custom.css" << EOL
+* {
+    cursor: none !important;
+}
+EOL
+    
+    echo -e "\e[32m✔\e[0m Unclutter ve alternatif araçlar başarıyla kuruldu ve yapılandırıldı."
+    echo -e "\e[32m✔\e[0m Fare imleci $IDLE_TIME saniye hareketsiz kaldıktan sonra gizlenecek."
+    echo -e "\e[33mNot:\e[0m Wayland ile unclutter uyumsuzluğu olabilir. Sistem yeniden başlatıldıktan sonra çalışmazsa,"
+    echo -e "      alternatif olarak kurduğumuz wl-hide-cursor kullanılacaktır."
 fi
     
 # greetd kurmak ve yapılandırmak ister misiniz?
@@ -189,6 +216,12 @@ if ask_user "Labwc için otomatik başlatma (chromium) betiği oluşturmak ister
         USE_INCOGNITO=false
     fi
 
+    # Fare imlecini gizleme seçeneği
+    HIDE_CURSOR=false
+    if ask_user "Chromium'da fare imlecini gizlemek ister misiniz?"; then
+        HIDE_CURSOR=true
+    fi
+
     # Chromium komutunu oluştur
     CHROMIUM_CMD="/usr/bin/chromium-browser"
 
@@ -221,6 +254,23 @@ if ask_user "Labwc için otomatik başlatma (chromium) betiği oluşturmak ister
     
     if [ "$TREAT_INSECURE" = true ] && [ -n "$INSECURE_ORIGIN" ]; then
         CHROMIUM_CMD="$CHROMIUM_CMD --unsafely-treat-insecure-origin-as-secure=$INSECURE_ORIGIN"
+    fi
+    
+    # Fare imlecini gizleme için CSS enjeksiyonu
+    if [ "$HIDE_CURSOR" = true ]; then
+        # CSS dosyasını oluştur
+        CHROMIUM_CSS_DIR="/home/$CURRENT_USER/.config/chromium-kiosk/Default/User StyleSheets"
+        mkdir -p "$CHROMIUM_CSS_DIR"
+        
+        cat > "$CHROMIUM_CSS_DIR/Custom.css" << EOL
+* {
+    cursor: none !important;
+}
+EOL
+        echo -e "\e[32m✔\e[0m Chromium için fare imleci gizleme CSS'i oluşturuldu."
+        
+        # Ayrıca cursor parametresini ekle
+        CHROMIUM_CMD="$CHROMIUM_CMD --disable-cursor-lock --disable-pointer-events"
     fi
     
     # URL ekle
