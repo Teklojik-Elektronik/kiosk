@@ -12,6 +12,7 @@
 # 2024-11-13 v1.2: wlr-randr kurulumu eklendi
 # 2024-11-20 v1.3: Chromium için detaylı yapılandırma seçenekleri eklendi
 # 2024-11-25 v1.4: Unclutter ve Chromium Css kurulumu eklendi
+# 2024-11-28 v1.5: Wayland için gelişmiş fare imleci gizleme desteği eklendi
 
 # Ek mesaj ile spinner görüntüleme fonksiyonu
 spinner() {
@@ -39,6 +40,9 @@ fi
     
 # Geçerli kullanıcıyı belirle
 CURRENT_USER=$(whoami)
+
+# Wayland kullanılıyor mu kontrolü için değişken
+USE_WAYLAND=false
 
 # Kullanıcıya evet/hayır sorusu soran fonksiyon
 ask_user() {
@@ -75,6 +79,47 @@ if ask_user "Wayland ve labwc paketlerini kurmak ister misiniz?"; then
     echo -e "\e[90mWayland paketleri kuruluyor, lütfen bekleyin...\e[0m"
     sudo apt install --no-install-recommends -y labwc wlr-randr seatd > /dev/null 2>&1 &
     spinner $! "Wayland paketleri kuruluyor..."
+    
+    # Wayland kullanılacağını belirt
+    USE_WAYLAND=true
+    
+    # labwc yapılandırma dosyasını oluştur
+    LABWC_CONFIG_DIR="/home/$CURRENT_USER/.config/labwc"
+    mkdir -p "$LABWC_CONFIG_DIR"
+    
+    # rc.xml dosyası oluştur veya güncelle
+    LABWC_RC_FILE="$LABWC_CONFIG_DIR/rc.xml"
+    
+    # rc.xml dosyası yoksa oluştur
+    if [ ! -f "$LABWC_RC_FILE" ]; then
+        # Temel bir rc.xml dosyası oluştur ve fare imleci gizleme ayarını ekle
+        cat > "$LABWC_RC_FILE" << EOL
+<?xml version="1.0"?>
+
+<labwc_config>
+  <core>
+    <gap>0</gap>
+  </core>
+
+  <seat>
+    <hide-cursor>3000</hide-cursor>
+  </seat>
+</labwc_config>
+EOL
+        echo -e "\e[32m✔\e[0m Labwc yapılandırma dosyası oluşturuldu ve fare imleci gizleme ayarı eklendi."
+    else
+        # Dosya varsa ve seat etiketi yoksa ekle
+        if ! grep -q "<seat>" "$LABWC_RC_FILE"; then
+            sed -i '/<\/labwc_config>/i \  <seat>\n    <hide-cursor>3000</hide-cursor>\n  </seat>' "$LABWC_RC_FILE"
+            echo -e "\e[32m✔\e[0m Labwc yapılandırma dosyasına fare imleci gizleme ayarı eklendi."
+        # Dosya varsa ve seat etiketi varsa ama hide-cursor yoksa ekle
+        elif ! grep -q "<hide-cursor>" "$LABWC_RC_FILE"; then
+            sed -i '/<seat>/a \    <hide-cursor>3000</hide-cursor>' "$LABWC_RC_FILE"
+            echo -e "\e[32m✔\e[0m Labwc yapılandırma dosyasına fare imleci gizleme ayarı eklendi."
+        else
+            echo -e "\e[33mLabwc yapılandırma dosyası zaten fare imleci gizleme ayarı içeriyor.\e[0m"
+        fi
+    fi
 fi
     
 # Chromium tarayıcısını kurmak ister misiniz?
@@ -85,21 +130,50 @@ if ask_user "Chromium tarayıcısını kurmak ister misiniz?"; then
     spinner $! "Chromium tarayıcısı kuruluyor..."
 fi
 
-# Unclutter kurmak ister misiniz?
+# Fare imlecini gizlemek için araçlar kurmak ister misiniz?
 echo
-if ask_user "Fare imlecini gizlemek için unclutter kurmak ister misiniz?"; then
-    echo -e "\e[90mUnclutter kuruluyor, lütfen bekleyin...\e[0m"
-    sudo apt install -y unclutter > /dev/null 2>&1 &
-    spinner $! "Unclutter kuruluyor..."
+if ask_user "Fare imlecini gizlemek için araçlar kurmak ister misiniz?"; then
+    echo -e "\e[90mFare imleci gizleme araçları kuruluyor, lütfen bekleyin...\e[0m"
     
     # Kullanıcıdan imlecin gizlenmesi için bekleme süresini iste
     read -p "İmlecin gizlenmesi için kaç saniye hareketsiz kalması gerektiğini girin [varsayılan: 3]: " IDLE_TIME
     IDLE_TIME="${IDLE_TIME:-3}"
     
-    # Unclutter komutunu oluştur - Wayland için ek parametreler ekle
-    UNCLUTTER_CMD="unclutter --timeout $IDLE_TIME --fork"
+    # Wayland için wl-hide-cursor kur
+    if [ "$USE_WAYLAND" = true ]; then
+        echo -e "\e[90mWayland için fare imleci gizleme aracı kuruluyor...\e[0m"
+        sudo apt install -y wl-hide-cursor > /dev/null 2>&1 || true
+        
+        # Wayland için labwc autostart dosyasına wl-hide-cursor ekle
+        AUTOSTART_FILE="/home/$CURRENT_USER/.config/labwc/autostart"
+        mkdir -p "/home/$CURRENT_USER/.config/labwc"
+        
+        # wl-hide-cursor komutunu oluştur
+        WL_HIDE_CMD="wl-hide-cursor -t $IDLE_TIME &"
+        
+        # Dosyanın var olup olmadığını kontrol et ve wl-hide-cursor satırını güncelle veya ekle
+        if [ -f "$AUTOSTART_FILE" ] && grep -q "wl-hide-cursor" "$AUTOSTART_FILE" 2>/dev/null; then
+            # Mevcut wl-hide-cursor satırını yeni komutla değiştir
+            sed -i "/wl-hide-cursor/c\\$WL_HIDE_CMD" "$AUTOSTART_FILE"
+            echo -e "\e[32m✔\e[0m Mevcut wl-hide-cursor komutu güncellendi."
+        else
+            # Dosya yoksa veya wl-hide-cursor içermiyorsa, komutu ekle
+            echo "$WL_HIDE_CMD" >> "$AUTOSTART_FILE"
+            echo -e "\e[32m✔\e[0m wl-hide-cursor komutu labwc autostart dosyasına başarıyla eklendi!"
+        fi
+        
+        echo -e "\e[32m✔\e[0m Wayland için fare imleci gizleme aracı başarıyla kuruldu ve yapılandırıldı."
+    fi
     
-    # Komutu .config/labwc/autostart dosyasına ekle (zaten yoksa)
+    # Her durumda unclutter da kur (X11 uyumluluğu için)
+    echo -e "\e[90mX11 uyumlu fare imleci gizleme aracı kuruluyor...\e[0m"
+    sudo apt install -y unclutter > /dev/null 2>&1 &
+    spinner $! "Unclutter kuruluyor..."
+    
+    # Unclutter için eski ve daha uyumlu komutu oluştur
+    UNCLUTTER_CMD="unclutter -idle 0.1 -root &"
+    
+    # Komutu autostart dosyasına ekle
     AUTOSTART_FILE="/home/$CURRENT_USER/.config/labwc/autostart"
     mkdir -p "/home/$CURRENT_USER/.config/labwc"
     
@@ -111,18 +185,7 @@ if ask_user "Fare imlecini gizlemek için unclutter kurmak ister misiniz?"; then
     else
         # Dosya yoksa veya unclutter içermiyorsa, komutu ekle
         echo "$UNCLUTTER_CMD" >> "$AUTOSTART_FILE"
-        echo -e "\e[32m✔\e[0m Unclutter komutu labwc autostart dosyasına başarıyla eklendi!"
-    fi
-    
-    # Ayrıca alternatif bir yöntem olarak wl-hide-cursor'ı da kuralım
-    echo -e "\e[90mWayland için alternatif fare gizleme aracı kuruluyor...\e[0m"
-    sudo apt install -y wl-hide-cursor > /dev/null 2>&1 || true
-    
-    # wl-hide-cursor komutunu da autostart dosyasına ekle
-    WL_HIDE_CMD="wl-hide-cursor -t $IDLE_TIME &"
-    if ! grep -q "wl-hide-cursor" "$AUTOSTART_FILE" 2>/dev/null; then
-        echo "$WL_HIDE_CMD" >> "$AUTOSTART_FILE"
-        echo -e "\e[32m✔\e[0m wl-hide-cursor komutu labwc autostart dosyasına başarıyla eklendi!"
+        echo -e "\e[32m✔\e[0m Unclutter komutu autostart dosyasına başarıyla eklendi!"
     fi
     
     # Ayrıca Chromium için imleç gizleme CSS'si oluştur
@@ -135,11 +198,21 @@ if ask_user "Fare imlecini gizlemek için unclutter kurmak ister misiniz?"; then
     cursor: none !important;
 }
 EOL
+    echo -e "\e[32m✔\e[0m Chromium için fare imleci gizleme CSS'i oluşturuldu."
     
-    echo -e "\e[32m✔\e[0m Unclutter ve alternatif araçlar başarıyla kuruldu ve yapılandırıldı."
-    echo -e "\e[32m✔\e[0m Fare imleci $IDLE_TIME saniye hareketsiz kaldıktan sonra gizlenecek."
-    echo -e "\e[33mNot:\e[0m Wayland ile unclutter uyumsuzluğu olabilir. Sistem yeniden başlatıldıktan sonra çalışmazsa,"
-    echo -e "      alternatif olarak kurduğumuz wl-hide-cursor kullanılacaktır."
+    echo -e "\e[32m✔\e[0m Fare imleci gizleme araçları başarıyla kuruldu ve yapılandırıldı."
+    
+    if [ "$USE_WAYLAND" = true ]; then
+        echo -e "\e[32m✔\e[0m Fare imleci $IDLE_TIME saniye hareketsiz kaldıktan sonra gizlenecek."
+        echo -e "\e[94mBilgi:\e[0m Wayland ortamında birden fazla fare gizleme yöntemi yapılandırıldı:"
+        echo -e "      1. labwc'nin kendi hide-cursor özelliği (rc.xml dosyasında)"
+        echo -e "      2. wl-hide-cursor aracı (autostart dosyasında)"
+        echo -e "      3. Chromium için CSS gizleme yöntemi"
+        echo -e "      4. Uyumluluk için unclutter (X11 için)"
+    else
+        echo -e "\e[32m✔\e[0m Fare imleci kısa bir süre hareketsiz kaldıktan sonra gizlenecek."
+        echo -e "\e[94mBilgi:\e[0m X11 ortamında unclutter ve Chromium CSS gizleme yöntemleri kullanılacak."
+    fi
 fi
     
 # greetd kurmak ve yapılandırmak ister misiniz?
