@@ -103,6 +103,21 @@ if ask_user "Wayland ve labwc paketlerini kurmak ister misiniz?"; then
 EOL
         echo -e "\e[32m✔\e[0m Labwc yapılandırma dosyası oluşturuldu."
     fi
+    
+    # Labwc için cursor_theme.xml dosyası oluştur
+    LABWC_CURSOR_FILE="$LABWC_CONFIG_DIR/cursor_theme.xml"
+    if [ ! -f "$LABWC_CURSOR_FILE" ]; then
+        # Boş imleç teması dosyası oluştur
+        cat > "$LABWC_CURSOR_FILE" << EOL
+<?xml version="1.0"?>
+
+<labwc_cursor_theme>
+  <name>default</name>
+  <size>0</size>
+</labwc_cursor_theme>
+EOL
+        echo -e "\e[32m✔\e[0m Labwc imleç teması dosyası oluşturuldu."
+    fi
 fi
     
 # İmleci gizlemek ister misiniz?
@@ -328,16 +343,44 @@ if ask_user "Labwc için otomatik başlatma (chromium) betiği oluşturmak ister
     # İmleç gizleme ve Chromium başlatma komutunu otomatik başlatma dosyasına ekle veya oluştur
     if [ "$HIDE_CURSOR" = true ]; then
         if [ "$USE_WAYLAND" = true ]; then
-            # İmleç gizleme için wayfire-plugins-extra komutunu ekle
+            # İmleç gizleme için birden fazla yöntem ekle (en az biri çalışacaktır)
+            
+            # 1. wf-hide-cursor komutunu ekle
             if ! grep -q "wf-hide-cursor" "$LABWC_AUTOSTART_FILE"; then
                 echo "wf-hide-cursor &" >> "$LABWC_AUTOSTART_FILE"
                 echo -e "\e[32m✔\e[0m wf-hide-cursor komutu eklendi."
+            fi
+            
+            # 2. Wayland için seat0 imleç gizleme komutunu ekle
+            if ! grep -q "seat0 hide_cursor" "$LABWC_AUTOSTART_FILE"; then
+                echo "# Wayland için imleç gizleme" >> "$LABWC_AUTOSTART_FILE"
+                echo "export WLR_HIDE_CURSOR=1" >> "$LABWC_AUTOSTART_FILE"
+                echo -e "\e[32m✔\e[0m WLR_HIDE_CURSOR ortam değişkeni eklendi."
+            fi
+            
+            # 3. Alternatif olarak, boş imleç teması kullan
+            if ! grep -q "XCURSOR_SIZE=0" "$LABWC_AUTOSTART_FILE"; then
+                echo "# Boş imleç teması kullan" >> "$LABWC_AUTOSTART_FILE"
+                echo "export XCURSOR_SIZE=0" >> "$LABWC_AUTOSTART_FILE"
+                echo -e "\e[32m✔\e[0m XCURSOR_SIZE=0 ortam değişkeni eklendi."
+            fi
+            
+            # 4. Alternatif olarak, wlr-randr ile imleç gizleme
+            if ! grep -q "wlr-randr --hide-cursor" "$LABWC_AUTOSTART_FILE"; then
+                echo "wlr-randr --hide-cursor &" >> "$LABWC_AUTOSTART_FILE"
+                echo -e "\e[32m✔\e[0m wlr-randr --hide-cursor komutu eklendi."
             fi
         else
             # İmleç gizleme için unclutter komutunu ekle
             if ! grep -q "unclutter" "$LABWC_AUTOSTART_FILE"; then
                 echo "unclutter -idle 0.01 -root &" >> "$LABWC_AUTOSTART_FILE"
                 echo -e "\e[32m✔\e[0m unclutter komutu eklendi."
+            fi
+            
+            # X11 için alternatif imleç gizleme yöntemi
+            if ! grep -q "xsetroot -cursor" "$LABWC_AUTOSTART_FILE"; then
+                echo "xsetroot -cursor_name blank &" >> "$LABWC_AUTOSTART_FILE"
+                echo -e "\e[32m✔\e[0m xsetroot imleç gizleme komutu eklendi."
             fi
         fi
     fi
