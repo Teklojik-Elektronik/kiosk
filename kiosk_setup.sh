@@ -113,23 +113,85 @@ if ask_user "İmleci (cursor) gizlemek ister misiniz?"; then
     
     if [ "$USE_WAYLAND" = true ]; then
         echo -e "\e[90mWayfire plugins extra kuruluyor, lütfen bekleyin...\e[0m"
-        # GitHub'dan wayfire-plugins-extra-raspbian klonla
+        
+        # Gerekli paketleri kur
+        echo -e "\e[90mGerekli paketler kuruluyor...\e[0m"
+        sudo apt install -y git meson ninja-build build-essential libwayland-dev libwf-config-dev libwlroots-dev > /dev/null 2>&1 &
+        spinner $! "Gerekli paketler kuruluyor..."
+        
+        # Geçici dizine geç
         cd /tmp
-        git clone https://github.com/seffs/wayfire-plugins-extra-raspbian.git > /dev/null 2>&1 &
-        spinner $! "wayfire-plugins-extra-raspbian klonlanıyor..."
         
-        cd wayfire-plugins-extra-raspbian
-        echo -e "\e[90mwayfire-plugins-extra-raspbian kuruluyor...\e[0m"
-        sudo dpkg -i *.deb > /dev/null 2>&1 &
-        spinner $! "wayfire-plugins-extra-raspbian kuruluyor..."
+        # Önceki klonlama işleminden kalan dizini temizle
+        if [ -d "wayfire-plugins-extra-raspbian" ]; then
+            rm -rf wayfire-plugins-extra-raspbian
+        fi
         
-        # Bağımlılık sorunlarını çöz
-        echo -e "\e[90mOlası bağımlılık sorunları çözülüyor...\e[0m"
-        sudo apt install -f -y > /dev/null 2>&1 &
-        spinner $! "Bağımlılıklar çözülüyor..."
+        # GitHub'dan wayfire-plugins-extra-raspbian klonla
+        echo -e "\e[90mwayfire-plugins-extra-raspbian klonlanıyor...\e[0m"
+        git clone https://github.com/seffs/wayfire-plugins-extra-raspbian.git
         
+        # Klonlama başarılı mı kontrol et
+        if [ -d "wayfire-plugins-extra-raspbian" ]; then
+            cd wayfire-plugins-extra-raspbian
+            
+            # Meson ile derleme için hazırla
+            echo -e "\e[90mMeson ile derleme için hazırlanıyor...\e[0m"
+            meson build --prefix=/usr --buildtype=release > /dev/null 2>&1 &
+            spinner $! "Meson ile derleme için hazırlanıyor..."
+            
+            # Ninja ile derle ve kur
+            echo -e "\e[90mNinja ile derleniyor ve kuruluyor...\e[0m"
+            ninja -C build > /dev/null 2>&1 && sudo ninja -C build install > /dev/null 2>&1 &
+            spinner $! "Ninja ile derleniyor ve kuruluyor..."
+            
+            # Wayfire yapılandırma dosyasını oluştur
+            echo -e "\e[90mWayfire yapılandırma dosyası oluşturuluyor...\e[0m"
+            WAYFIRE_CONFIG_DIR="/home/$CURRENT_USER/.config/wayfire"
+            mkdir -p "$WAYFIRE_CONFIG_DIR"
+            
+            # wayfire.ini dosyasını oluştur veya güncelle
+            WAYFIRE_CONFIG_FILE="$WAYFIRE_CONFIG_DIR/wayfire.ini"
+            
+            # wayfire.ini dosyası yoksa oluştur
+            if [ ! -f "$WAYFIRE_CONFIG_FILE" ]; then
+                # Temel bir wayfire.ini dosyası oluştur
+                cat > "$WAYFIRE_CONFIG_FILE" << EOL
+[hide-cursor]
+timeout = 0.1
+
+[core]
+plugins = hide-cursor
+EOL
+                echo -e "\e[32m✔\e[0m Wayfire yapılandırma dosyası oluşturuldu."
+            else
+                # Dosya varsa, hide-cursor eklentisini etkinleştir
+                if ! grep -q "\[hide-cursor\]" "$WAYFIRE_CONFIG_FILE"; then
+                    echo -e "\n[hide-cursor]\ntimeout = 0.1" >> "$WAYFIRE_CONFIG_FILE"
+                    echo -e "\e[32m✔\e[0m hide-cursor bölümü Wayfire yapılandırma dosyasına eklendi."
+                fi
+                
+                # core plugins listesine hide-cursor ekle
+                if grep -q "\[core\]" "$WAYFIRE_CONFIG_FILE"; then
+                    if ! grep -q "plugins.*hide-cursor" "$WAYFIRE_CONFIG_FILE"; then
+                        # plugins satırını bul ve hide-cursor ekle
+                        sed -i '/\[core\]/,/\[.*\]/ s/plugins = \(.*\)/plugins = \1 hide-cursor/' "$WAYFIRE_CONFIG_FILE"
+                        echo -e "\e[32m✔\e[0m hide-cursor eklentisi core plugins listesine eklendi."
+                    fi
+                else
+                    # core bölümü yoksa ekle
+                    echo -e "\n[core]\nplugins = hide-cursor" >> "$WAYFIRE_CONFIG_FILE"
+                    echo -e "\e[32m✔\e[0m core bölümü ve hide-cursor eklentisi Wayfire yapılandırma dosyasına eklendi."
+                fi
+            fi
+            
+            echo -e "\e[32m✔\e[0m wayfire-plugins-extra-raspbian başarıyla kuruldu ve yapılandırıldı."
+        else
+            echo -e "\e[31m✘\e[0m wayfire-plugins-extra-raspbian klonlanamadı. wf-hide-cursor kurulumu atlanıyor."
+        fi
+        
+        # Ana dizine geri dön
         cd /home/$CURRENT_USER
-        echo -e "\e[32m✔\e[0m wayfire-plugins-extra-raspbian başarıyla kuruldu."
     else
         echo -e "\e[90munclutter kuruluyor, lütfen bekleyin...\e[0m"
         sudo apt install -y unclutter > /dev/null 2>&1 &
