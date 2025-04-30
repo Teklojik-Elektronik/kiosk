@@ -11,7 +11,7 @@
 # 2024-11-04 v1.1: Wayfire'dan labwc'ye geçiş
 # 2024-11-13 v1.2: wlr-randr kurulumu eklendi
 # 2024-11-20 v1.3: Chromium için detaylı yapılandırma seçenekleri eklendi
-# 2024-11-25 v1.4: Unclutter kurulumu eklendi
+# 2024-11-25 v1.4: Unclutter ve Chromium Css kurulumu eklendi
 
 # Ek mesaj ile spinner görüntüleme fonksiyonu
 spinner() {
