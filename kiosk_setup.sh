@@ -353,6 +353,108 @@ EOL
         fi
     fi
     
+    # Uyku modunu ve ekran koruyucuyu devre dışı bırakma
+    echo
+    if ask_user "Uyku modunu ve ekran koruyucuyu devre dışı bırakmak ister misiniz?"; then
+        echo -e "\e[90mUyku modu ve ekran koruyucu ayarları yapılandırılıyor...\e[0m"
+        
+        # Grafik ortamına göre uyku modu ayarlarını yap
+        if [ "$USING_X11" = true ]; then
+            # X11 için ekran koruyucu ve güç yönetimi ayarlarını devre dışı bırak
+            OPENBOX_AUTOSTART="/home/$CURRENT_USER/.config/openbox/autostart"
+            
+            # Ekran koruyucu komutlarını ekle
+            if ! grep -q "xset s off" "$OPENBOX_AUTOSTART"; then
+                echo "# Ekran koruyucuyu devre dışı bırak" >> "$OPENBOX_AUTOSTART"
+                echo "xset s off" >> "$OPENBOX_AUTOSTART"
+                echo "xset -dpms" >> "$OPENBOX_AUTOSTART"
+                echo "xset s noblank" >> "$OPENBOX_AUTOSTART"
+                echo -e "\e[32m✔\e[0m Ekran koruyucu devre dışı bırakma komutları Openbox autostart dosyasına eklendi!"
+            else
+                echo -e "\e[33mEkran koruyucu komutları zaten Openbox autostart dosyasında mevcut.\e[0m"
+            fi
+            
+            # lightdm.conf dosyasını düzenle
+            if [ -f "/etc/lightdm/lightdm.conf" ]; then
+                if ! grep -q "xserver-command=X -s 0 -dpms" "/etc/lightdm/lightdm.conf"; then
+                    sudo sed -i '/^\[SeatDefaults\]/a xserver-command=X -s 0 -dpms' "/etc/lightdm/lightdm.conf"
+                    echo -e "\e[32m✔\e[0m LightDM yapılandırması güncellendi!"
+                else
+                    echo -e "\e[33mLightDM yapılandırması zaten güncel.\e[0m"
+                fi
+            fi
+        elif [ "$USING_WAYLAND" = true ]; then
+            # Wayland için uyku modu ayarlarını devre dışı bırak
+            echo -e "\e[33mNot: Wayland için ekran koruyucu devre dışı bırakma işlemi farklıdır.\e[0m"
+            
+            # labwc için idle inhibit ayarı
+            LABWC_CONFIG_DIR="/home/$CURRENT_USER/.config/labwc"
+            mkdir -p "$LABWC_CONFIG_DIR"
+            
+            # rc.xml dosyasını oluştur veya güncelle
+            if [ ! -f "$LABWC_CONFIG_DIR/rc.xml" ]; then
+                cat <<EOL > "$LABWC_CONFIG_DIR/rc.xml"
+<?xml version="1.0"?>
+<labwc_config>
+  <core>
+    <idleInhibit>always</idleInhibit>
+  </core>
+</labwc_config>
+EOL
+                echo -e "\e[32m✔\e[0m labwc yapılandırması oluşturuldu ve idle inhibit ayarlandı!"
+            else
+                if ! grep -q "<idleInhibit>always</idleInhibit>" "$LABWC_CONFIG_DIR/rc.xml"; then
+                    # Dosya var ama idleInhibit ayarı yok, ekle
+                    sed -i '/<core>/a \ \ <idleInhibit>always</idleInhibit>' "$LABWC_CONFIG_DIR/rc.xml"
+                    echo -e "\e[32m✔\e[0m labwc yapılandırmasına idle inhibit ayarı eklendi!"
+                else
+                    echo -e "\e[33mlabwc yapılandırması zaten idle inhibit ayarını içeriyor.\e[0m"
+                fi
+            fi
+        fi
+        
+        # Sistem genelinde uyku modunu devre dışı bırak
+        echo -e "\e[90mSistem genelinde uyku modu ayarları yapılandırılıyor...\e[0m"
+        
+        # logind.conf dosyasını düzenle
+        if [ -f "/etc/systemd/logind.conf" ]; then
+            sudo cp "/etc/systemd/logind.conf" "/etc/systemd/logind.conf.bak"
+            echo -e "\e[32m✔\e[0m logind.conf yedeklendi."
+            
+            # HandleLidSwitch ayarını ekle veya güncelle
+            if grep -q "^#HandleLidSwitch=" "/etc/systemd/logind.conf" || ! grep -q "HandleLidSwitch=" "/etc/systemd/logind.conf"; then
+                sudo sed -i 's/^#HandleLidSwitch=.*/HandleLidSwitch=ignore/' "/etc/systemd/logind.conf"
+                if ! grep -q "HandleLidSwitch=" "/etc/systemd/logind.conf"; then
+                    echo "HandleLidSwitch=ignore" | sudo tee -a "/etc/systemd/logind.conf" > /dev/null
+                fi
+            fi
+            
+            # HandleLidSwitchDocked ayarını ekle veya güncelle
+            if grep -q "^#HandleLidSwitchDocked=" "/etc/systemd/logind.conf" || ! grep -q "HandleLidSwitchDocked=" "/etc/systemd/logind.conf"; then
+                sudo sed -i 's/^#HandleLidSwitchDocked=.*/HandleLidSwitchDocked=ignore/' "/etc/systemd/logind.conf"
+                if ! grep -q "HandleLidSwitchDocked=" "/etc/systemd/logind.conf"; then
+                    echo "HandleLidSwitchDocked=ignore" | sudo tee -a "/etc/systemd/logind.conf" > /dev/null
+                fi
+            fi
+            
+            # IdleAction ayarını ekle veya güncelle
+            if grep -q "^#IdleAction=" "/etc/systemd/logind.conf" || ! grep -q "IdleAction=" "/etc/systemd/logind.conf"; then
+                sudo sed -i 's/^#IdleAction=.*/IdleAction=ignore/' "/etc/systemd/logind.conf"
+                if ! grep -q "IdleAction=" "/etc/systemd/logind.conf"; then
+                    echo "IdleAction=ignore" | sudo tee -a "/etc/systemd/logind.conf" > /dev/null
+                fi
+            fi
+            
+            echo -e "\e[32m✔\e[0m logind.conf güncellendi, uyku modu devre dışı bırakıldı."
+            
+            # systemd-logind servisini yeniden başlat
+            sudo systemctl restart systemd-logind
+            echo -e "\e[32m✔\e[0m systemd-logind servisi yeniden başlatıldı."
+        else
+            echo -e "\e[33mUyarı: /etc/systemd/logind.conf dosyası bulunamadı. Sistem genelinde uyku modu ayarları yapılandırılamadı.\e[0m"
+        fi
+    fi
+    
     echo -e "\e[1;32m=== Raspberry Pi Kiosk Kurulumu Tamamlandı ===\e[0m"
     echo -e "Sistemi yeniden başlatmanız önerilir. Şimdi yeniden başlatmak ister misiniz?"
     if ask_user "Sistemi şimdi yeniden başlatmak ister misiniz?"; then

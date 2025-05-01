@@ -121,6 +121,7 @@ Kurulum sırasında aşağıdaki seçenekleri yapılandırabilirsiniz:
 - Ekran koruyucu devre dışı bırakılır, böylece ekran her zaman açık kalır.
 - Sistem, Home Assistant'a erişilebilir olup olmadığını kontrol eder ve erişilebilir olana kadar bekler.
 - **Not**: Wayland/labwc seçildiğinde fare imleci gizleme özelliği şu anda tam olarak çalışmamaktadır. Bu özellik üzerinde çalışmalar devam etmektedir.
+- **Yeni**: Kurulum betiği artık hem X11 hem de Wayland için uyku modunu devre dışı bırakma seçeneği sunmaktadır. Bu, ekranın her zaman açık kalmasını ve sistemin uyku moduna geçmemesini sağlar.
 
 ## 🤝 Katkıda Bulunma
 
