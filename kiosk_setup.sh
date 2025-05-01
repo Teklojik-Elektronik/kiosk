@@ -511,29 +511,80 @@ EOL
         # Özel logo eklemek ister misiniz?
         echo
         if ask_user "Özel bir logo eklemek ister misiniz?"; then
-            # Logo dosyasının yolunu sor
-            read -p "Logo dosyasının tam yolunu girin (örn: /home/pi/logo.png): " LOGO_PATH
+            # Logo kaynağını sor
+            echo -e "\e[94mLogo kaynağını seçin:\e[0m"
+            echo "1. Yerel dosya"
+            echo "2. URL'den indir"
+            read -p "Seçiminiz (1 veya 2): " LOGO_SOURCE
             
-            if [ -f "$LOGO_PATH" ]; then
-                # Logo dosyasını Plymouth tema klasörüne kopyala
-                sudo cp "$LOGO_PATH" "/usr/share/plymouth/themes/$THEME_NAME/"
-                echo -e "\e[32m✔\e[0m Logo dosyası Plymouth tema klasörüne kopyalandı."
+            LOGO_PATH=""
+            LOGO_FILENAME=""
+            
+            if [ "$LOGO_SOURCE" = "1" ]; then
+                # Yerel dosya seçildi
+                read -p "Logo dosyasının tam yolunu girin (örn: /home/pi/logo.png): " LOGO_PATH
                 
-                # Tema yapılandırma dosyasını güncelle (tema yapısına bağlı olarak değişebilir)
-                if [ -f "/usr/share/plymouth/themes/$THEME_NAME/$THEME_NAME.plymouth" ]; then
+                if [ -f "$LOGO_PATH" ]; then
                     LOGO_FILENAME=$(basename "$LOGO_PATH")
-                    sudo sed -i "s|ImageDir=.*|ImageDir=/usr/share/plymouth/themes/$THEME_NAME|" "/usr/share/plymouth/themes/$THEME_NAME/$THEME_NAME.plymouth"
-                    sudo sed -i "s|ScaleHintImage=.*|ScaleHintImage=$LOGO_FILENAME|" "/usr/share/plymouth/themes/$THEME_NAME/$THEME_NAME.plymouth" 2>/dev/null || true
-                    echo -e "\e[32m✔\e[0m Plymouth tema yapılandırması güncellendi."
-                    
-                    # initramfs'i tekrar güncelle
-                    sudo update-initramfs -u > /dev/null 2>&1 &
-                    spinner $! "initramfs güncelleniyor..."
+                    # Logo dosyasını Plymouth tema klasörüne kopyala
+                    sudo cp "$LOGO_PATH" "/usr/share/plymouth/themes/$THEME_NAME/"
+                    echo -e "\e[32m✔\e[0m Logo dosyası Plymouth tema klasörüne kopyalandı."
                 else
-                    echo -e "\e[33mUyarı: Plymouth tema yapılandırma dosyası bulunamadı. Logo ayarları yapılamadı.\e[0m"
+                    echo -e "\e[33mUyarı: Belirtilen logo dosyası bulunamadı: $LOGO_PATH\e[0m"
+                    continue
+                fi
+            elif [ "$LOGO_SOURCE" = "2" ]; then
+                # URL'den indir
+                read -p "Logo URL'sini girin (örn: https://example.com/logo.png): " LOGO_URL
+                
+                # URL'den dosya adını çıkar
+                LOGO_FILENAME=$(basename "$LOGO_URL")
+                
+                # Geçici bir dizin oluştur
+                TEMP_DIR=$(mktemp -d)
+                
+                # Logo dosyasını indir
+                echo -e "\e[90mLogo indiriliyor...\e[0m"
+                if command -v wget > /dev/null; then
+                    wget -q "$LOGO_URL" -O "$TEMP_DIR/$LOGO_FILENAME" > /dev/null 2>&1 &
+                    spinner $! "Logo indiriliyor..."
+                elif command -v curl > /dev/null; then
+                    curl -s "$LOGO_URL" -o "$TEMP_DIR/$LOGO_FILENAME" > /dev/null 2>&1 &
+                    spinner $! "Logo indiriliyor..."
+                else
+                    echo -e "\e[33mUyarı: wget veya curl bulunamadı. Logo indirilemedi.\e[0m"
+                    continue
+                fi
+                
+                # İndirilen dosyanın varlığını kontrol et
+                if [ -f "$TEMP_DIR/$LOGO_FILENAME" ]; then
+                    # Logo dosyasını Plymouth tema klasörüne kopyala
+                    sudo cp "$TEMP_DIR/$LOGO_FILENAME" "/usr/share/plymouth/themes/$THEME_NAME/"
+                    echo -e "\e[32m✔\e[0m Logo dosyası Plymouth tema klasörüne kopyalandı."
+                    
+                    # Geçici dizini temizle
+                    rm -rf "$TEMP_DIR"
+                else
+                    echo -e "\e[33mUyarı: Logo indirilemedi. URL'yi kontrol edin.\e[0m"
+                    rm -rf "$TEMP_DIR"
+                    continue
                 fi
             else
-                echo -e "\e[33mUyarı: Belirtilen logo dosyası bulunamadı: $LOGO_PATH\e[0m"
+                echo -e "\e[33mGeçersiz seçim. Logo ekleme işlemi atlanıyor.\e[0m"
+                continue
+            fi
+            
+            # Tema yapılandırma dosyasını güncelle (tema yapısına bağlı olarak değişebilir)
+            if [ -f "/usr/share/plymouth/themes/$THEME_NAME/$THEME_NAME.plymouth" ]; then
+                sudo sed -i "s|ImageDir=.*|ImageDir=/usr/share/plymouth/themes/$THEME_NAME|" "/usr/share/plymouth/themes/$THEME_NAME/$THEME_NAME.plymouth"
+                sudo sed -i "s|ScaleHintImage=.*|ScaleHintImage=$LOGO_FILENAME|" "/usr/share/plymouth/themes/$THEME_NAME/$THEME_NAME.plymouth" 2>/dev/null || true
+                echo -e "\e[32m✔\e[0m Plymouth tema yapılandırması güncellendi."
+                
+                # initramfs'i tekrar güncelle
+                sudo update-initramfs -u > /dev/null 2>&1 &
+                spinner $! "initramfs güncelleniyor..."
+            else
+                echo -e "\e[33mUyarı: Plymouth tema yapılandırma dosyası bulunamadı. Logo ayarları yapılamadı.\e[0m"
             fi
         fi
         

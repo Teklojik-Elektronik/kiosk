@@ -122,7 +122,7 @@ Kurulum sırasında aşağıdaki seçenekleri yapılandırabilirsiniz:
 
 - **Plymouth Açılış/Kapanış Ekranı**:
   - Farklı temalar arasından seçim yapma (spinner, bgrt, fade-in, tribar, text vb.)
-  - Özel logo ekleme
+  - Özel logo ekleme (yerel dosyadan veya URL'den)
   - Boot parametrelerini yapılandırma
 
 ## 📝 Notlar
