@@ -8,16 +8,16 @@
 # Debian sunucusuna hafif bir Chromium tabanlı kiosk modu yükler ve kaldırır
 #
 # İlave olarak eğer homeassistanızda https://github.com/TECH7Fox/sip-hass-card sip card kullanmak
-# isterseniz setifika sorunlarını alt etmek için sip sunucunuzun kendinen imzalı sertifiklarını
-# otomatik kabul etme gibi bir kaç ek ozellik eklenmiştir
+# isterseniz sertifika sorunlarını alt etmek için sip sunucunuzun kendinden imzalı sertifikalarını
+# otomatik kabul etme gibi bir kaç ek özellik eklenmiştir
 #
 # Raspberry ile test ortamında kurulumunda sip card kullanımı için medya akışı için sahte UI,
-# sahte cihaz(kamera/mikrofon) kullanma isteğe bağlı kurululabilir
+# sahte cihaz(kamera/mikrofon) kullanma isteğe bağlı kurulabilir
 #
-# SSL sertigikalarını yoksayma
+# SSL sertifikalarını yoksayma
 # Güvensiz içeriğin çalışmasına izin verme
 # Güvensiz kaynakları güvenli olarak işaretleme
-# Chromium gizli modda çalıştırma özellikleri eklenerek sip cartı sorunsuzu çalıştırabilirsiniz
+# Chromium gizli modda çalıştırma özellikleri eklenerek sip cardı sorunsuz çalıştırabilirsiniz
 #
 # Apache Lisansı, Sürüm 2.0 (the "License") altında lisanslanmıştır;
 # bu dosyayı lisansa uygun olmadan kullanamazsınız.
@@ -30,7 +30,7 @@
 # HİÇBİR TÜRDEN AÇIK VEYA ZIMNİ GARANTİ OLMADAN dağıtılmaktadır.
 # Belirli izinler ve kısıtlamalar hakkında bilgi için lisansa bakın.
 #
-# Kullanım: sudo ./ha-chromium-kiosk-setup.sh {install|uninstall}
+# Kullanım: sudo ./kiosk_setup.sh {install|uninstall}
 #               install - Kiosk kurulumunu yapar
 #               uninstall - Kiosk kurulumunu kaldırır 
 #                                                
@@ -40,7 +40,7 @@
 ## GLOBAL DEĞİŞKENLER VE ÖN TANIMLAR ##
 KIOSK_USER="kiosk"
 CONFIG_DIR="/home/$KIOSK_USER/.config"
-KIOSK_CONFIG_DIR="$CONFIG_DIR/ha-chromium-kiosk"
+KIOSK_CONFIG_DIR="$CONFIG_DIR/kiosk"
 OPENBOX_CONFIG_DIR="$CONFIG_DIR/openbox"
 DEFAULT_HA_PORT="8123"
 DEFAULT_HA_DASHBOARD_PATH="lovelace/default_view"
@@ -114,7 +114,7 @@ install_package() {
     local package=$1
     
     echo -e "\e[90m$package kuruluyor, lütfen bekleyin...\e[0m"
-    sudo apt-get update > /dev/null 2>&1
+    # Her paket için apt-get update çalıştırmak yerine, install_packages fonksiyonunda bir kez çalıştıracağız
     sudo apt-get install -y "$package" > /dev/null 2>&1 &
     spinner $! "$package kuruluyor..."
     
@@ -156,6 +156,10 @@ install_packages() {
     
     if [ ${#missing_pkgs[@]} -ne 0 ]; then
         echo "Eksik paketler kuruluyor..."
+        # Önce bir kez apt-get update çalıştır
+        echo "Paket listesi güncelleniyor..."
+        sudo apt-get update > /dev/null 2>&1
+        
         total_pkgs=${#missing_pkgs[@]}
         current_pkg=0
         
@@ -175,6 +179,8 @@ install_packages() {
     fi
     
     # Daha sonra kaldırılacak paketlerin listesini bir dosyaya kaydedin
+    # Dizinin var olduğundan emin ol
+    sudo -u $KIOSK_USER mkdir -p "$KIOSK_CONFIG_DIR"
     echo "${missing_pkgs[*]}" > "$KIOSK_CONFIG_DIR/installed-packages"
 }
 
@@ -187,7 +193,7 @@ uninstall_packages() {
             echo "Kurulmuş paketler kaldırılıyor..."
             
             # Uninstall the packages and handle errors
-            if ! apt-get purge -y $installed_packages; then
+            if ! apt-get purge -y ${installed_packages[@]}; then
                 echo "Bazı paketler kaldırılamadı."
                 exit 1
             fi
@@ -226,6 +232,7 @@ check_create_user() {
             read -p "Kiosk kullanıcısı için farklı bir kullanıcı adı girin: " KIOSK_USER
             if [ -z "$KIOSK_USER" ]; then
                 echo "Kullanıcı adı boş olamaz. Lütfen geçerli bir kullanıcı adı girin."
+                continue
             fi
         else
             echo "Geçersiz giriş. Lütfen E veya H girin."
@@ -233,7 +240,7 @@ check_create_user() {
     done
     
     echo "Kiosk kullanıcısı oluşturuluyor..."
-    if ! adduser --disabled-password --gecos "" "$KIOSK_USER" 2>&1 >/dev/null; then
+    if ! adduser --disabled-password --gecos "" "$KIOSK_USER" >/dev/null 2>&1; then
         echo "Kiosk kullanıcısı oluşturulamadı. Çıkılıyor..."
         exit 1
     fi
@@ -245,7 +252,7 @@ check_create_user() {
 check_remove_user() {
     if id "$KIOSK_USER" &>/dev/null; then
         read -p "Kiosk kullanıcısı mevcut. Kullanıcıyı kaldırmak ister misiniz? (E/h): " remove_user
-        if [[ $remove_user =~ ^[Ee]?$ ]]; then
+        if [[ $remove_user =~ ^[Ee]$ || -z "$remove_user" ]]; then
             echo "Kiosk kullanıcısı kaldırılıyor..."
             userdel -rf "$KIOSK_USER"
         else
@@ -276,18 +283,25 @@ prompt_user() {
 # Kiosk kurulumunu kurun
 install_kiosk() {
     # Gerekli girdiler için kullanıcıdan istemde bulunun
-    prompt_user HA_IP "Home Assistant IP adresini girin" ""
-    prompt_user HA_PORT "Home Assistant port numarasını girin" "8123"
-    prompt_user HA_DASHBOARD_PATH "Home Assistant dashboard yolunu girin" "lovelace/default_view"
+    prompt_user KIOSK_BASE_URL "Home Assistant URL adresini girin (örn: https://homeassistant.local:8123)" ""
+    prompt_user KIOSK_DASHBOARD_PATH "Home Assistant dashboard yolunu girin (varsayılan: lovelace/default_view)" "lovelace/default_view"
+    
+    # URL ve dashboard path'i birleştir
+    # URL'nin sonunda / varsa kaldır
+    KIOSK_BASE_URL=${KIOSK_BASE_URL%/}
+    # Dashboard path'in başında / varsa kaldır
+    KIOSK_DASHBOARD_PATH=${KIOSK_DASHBOARD_PATH#/}
+    # İki değeri birleştir
+    KIOSK_URL="${KIOSK_BASE_URL}/${KIOSK_DASHBOARD_PATH}"
     
     # Kiosk modu ve imleç ayarları
-    prompt_user enable_kiosk "Kiosk modunu etkinleştirmek istiyor musunuz? (E/h)" "E"
+    prompt_user enable_kiosk "Home Assistant kiosk modunu etkinleştirmek ister misiniz? (URL'ye ?kiosk=true ekler) (E/h)" "E"
     prompt_user hide_cursor "Fare imlecini gizlemek istiyor musunuz? (E/h)" "E"
     
     # Ek Chromium parametreleri için sorular
     prompt_user USE_FAKE_UI "Medya akışı için sahte UI kullanmak ister misiniz? (kamera/mikrofon izinleri için) (E/h)" "H"
     prompt_user USE_FAKE_DEVICE "Medya akışı için sahte cihaz kullanmak ister misiniz? (test amaçlı sahte kamera/mikrofon) (E/h)" "H"
-    prompt_user IGNORE_CERT_ERRORS "SSL sertifika hatalarını yoksaymak ister misiniz? (öz-imzalı sertifikalar için) (E/h)" "H"
+    prompt_user IGNORE_CERT_ERRORS "SSL sertifika hatalarını yoksaymak ister misiniz? (kendinden-imzalı sertifikalar için) (E/h)" "H"
     prompt_user ALLOW_INSECURE "Güvensiz içeriğin çalışmasına izin vermek ister misiniz? (HTTPS üzerinden HTTP içeriği) (E/h)" "H"
     
     prompt_user TREAT_INSECURE "Güvensiz kaynakları güvenli olarak işaretlemek ister misiniz? (E/h)" "H"
@@ -298,9 +312,15 @@ install_kiosk() {
     # Gizli mod kullanımı
     prompt_user USE_INCOGNITO "Chromium'u gizli modda çalıştırmak ister misiniz? (Hayır derseniz, oturum bilgileri saklanır) (E/h)" "E"
     
-    KIOSK_MODE=""
-    [[ $enable_kiosk =~ ^[Ee]$ ]] && KIOSK_MODE="?kiosk=true"
-    KIOSK_URL="http://$HA_IP:$HA_PORT/$HA_DASHBOARD_PATH$KIOSK_MODE"
+    # Kiosk modu parametresini ekle
+    if [[ $enable_kiosk =~ ^[Ee]$ ]]; then
+        # URL'de zaten bir soru işareti (?) varsa & ile, yoksa ? ile ekle
+        if [[ "$KIOSK_URL" == *\?* ]]; then
+            KIOSK_URL="${KIOSK_URL}&kiosk=true"
+        else
+            KIOSK_URL="${KIOSK_URL}?kiosk=true"
+        fi
+    fi
     
     echo "Home Assistant dashboard'unuz şu adreste görüntülenecek: $KIOSK_URL"
     echo "Home Assistant URL için Chromium Kiosk Modu ayarlanıyor: $KIOSK_URL"
@@ -324,7 +344,7 @@ EOF
     
     # Kiosk başlatma betiğini oluşturun
     echo "Kiosk başlatma betiği oluşturuluyor..."
-    cat <<EOF >/usr/local/bin/ha-chromium-kiosk.sh
+    cat <<EOF >/usr/local/bin/kiosk.sh
 #!/bin/bash
 # Disable screen blanking
 xset s off
@@ -334,12 +354,45 @@ xset s noblank
 # İsteğe bağlı olarak fare imlecini gizleyin
 EOF
     
-    [[ $hide_cursor =~ ^[Ee]$ ]] && echo "unclutter -idle 0 &" >>/usr/local/bin/ha-chromium-kiosk.sh
+    [[ $hide_cursor =~ ^[Ee]$ ]] && echo "unclutter -idle 0 &" >>/usr/local/bin/kiosk.sh
     
-    cat <<EOF >>/usr/local/bin/ha-chromium-kiosk.sh
+    cat <<EOF >>/usr/local/bin/kiosk.sh
 check_network() {
-    while ! nc -z -w 5 $HA_IP $HA_PORT; do
-        echo "Home Assistant'ın erişilebilir olup olmadığı kontrol ediliyor..."
+    # URL'yi parçalara ayır
+    local protocol=$(echo "$KIOSK_BASE_URL" | grep -oP '^(https?)')
+    local host=$(echo "$KIOSK_BASE_URL" | grep -oP '^https?://\K([^:/]+)')
+    local port=$(echo "$KIOSK_BASE_URL" | grep -oP '^https?://[^:/]+:\K([0-9]+)')
+    
+    # Host bulunamadıysa, URL formatı hatalı olabilir
+    if [ -z "$host" ]; then
+        echo "Hata: URL'den host bilgisi çıkarılamadı. URL formatını kontrol edin."
+        echo "URL: $KIOSK_BASE_URL"
+        exit 1
+    fi
+    
+    # Port belirtilmemişse, protokole göre varsayılan port kullan
+    if [ -z "$port" ]; then
+        if [[ "$protocol" == "https" ]]; then
+            port=443
+        else
+            port=80
+        fi
+    fi
+    
+    echo "Ağ kontrolü: Host=$host, Port=$port"
+    
+    local max_attempts=30
+    local attempt=0
+    
+    while ! nc -z -w 5 "$host" "$port" 2>/dev/null; do
+        attempt=$((attempt + 1))
+        echo "Home Assistant'ın erişilebilir olup olmadığı kontrol ediliyor... ($attempt/$max_attempts)"
+        
+        if [ $attempt -ge $max_attempts ]; then
+            echo "Home Assistant'a $max_attempts denemeden sonra erişilemedi. Çıkılıyor..."
+            exit 1
+        fi
+        
         sleep 2
     done
 }
@@ -354,12 +407,12 @@ CHROMIUM_CMD="chromium"
 EOF
     
     if [[ $USE_INCOGNITO =~ ^[Ee]$ ]]; then
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --incognito"' >>/usr/local/bin/ha-chromium-kiosk.sh
+        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --incognito"' >>/usr/local/bin/kiosk.sh
     else
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --user-data-dir=/home/'$KIOSK_USER'/.config/chromium-kiosk --password-store=basic"' >>/usr/local/bin/ha-chromium-kiosk.sh
+        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --user-data-dir=/home/'$KIOSK_USER'/.config/chromium-kiosk --password-store=basic"' >>/usr/local/bin/kiosk.sh
     fi
     
-    cat <<EOF >>/usr/local/bin/ha-chromium-kiosk.sh
+    cat <<EOF >>/usr/local/bin/kiosk.sh
 # Temel kiosk parametreleri
 CHROMIUM_CMD="\$CHROMIUM_CMD --noerrdialogs --disable-infobars --kiosk --disable-session-crashed-bubble --disable-features=TranslateUI --overscroll-history-navigation=0 --pull-to-refresh=2 --autoplay-policy=no-user-gesture-required"
 
@@ -367,38 +420,38 @@ CHROMIUM_CMD="\$CHROMIUM_CMD --noerrdialogs --disable-infobars --kiosk --disable
 EOF
     
     if [[ $USE_FAKE_UI =~ ^[Ee]$ ]]; then
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --use-fake-ui-for-media-stream"' >>/usr/local/bin/ha-chromium-kiosk.sh
+        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --use-fake-ui-for-media-stream"' >>/usr/local/bin/kiosk.sh
     fi
     
     if [[ $USE_FAKE_DEVICE =~ ^[Ee]$ ]]; then
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --use-fake-device-for-media-stream"' >>/usr/local/bin/ha-chromium-kiosk.sh
+        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --use-fake-device-for-media-stream"' >>/usr/local/bin/kiosk.sh
     fi
     
     if [[ $IGNORE_CERT_ERRORS =~ ^[Ee]$ ]]; then
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --ignore-certificate-errors"' >>/usr/local/bin/ha-chromium-kiosk.sh
+        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --ignore-certificate-errors"' >>/usr/local/bin/kiosk.sh
     fi
     
     if [[ $ALLOW_INSECURE =~ ^[Ee]$ ]]; then
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --allow-running-insecure-content"' >>/usr/local/bin/ha-chromium-kiosk.sh
+        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --allow-running-insecure-content"' >>/usr/local/bin/kiosk.sh
     fi
     
     if [[ $TREAT_INSECURE =~ ^[Ee]$ ]] && [ -n "$INSECURE_ORIGIN" ]; then
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --unsafely-treat-insecure-origin-as-secure='$INSECURE_ORIGIN'"' >>/usr/local/bin/ha-chromium-kiosk.sh
+        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --unsafely-treat-insecure-origin-as-secure='$INSECURE_ORIGIN'"' >>/usr/local/bin/kiosk.sh
     fi
     
-    cat <<EOF >>/usr/local/bin/ha-chromium-kiosk.sh
+    cat <<EOF >>/usr/local/bin/kiosk.sh
 # URL ekle ve çalıştır
 \$CHROMIUM_CMD "$KIOSK_URL"
 EOF
     
-    chmod +x /usr/local/bin/ha-chromium-kiosk.sh
+    chmod +x /usr/local/bin/kiosk.sh
     
     echo "Kiosk betiğini başlatmak için Openbox yapılandırılıyor..."
-    echo "/usr/local/bin/ha-chromium-kiosk.sh &" > $OPENBOX_CONFIG_DIR/autostart
+    echo "/usr/local/bin/kiosk.sh &" > $OPENBOX_CONFIG_DIR/autostart
     
     # systemd hizmetini oluşturun
     echo "Systemd servisi oluşturuluyor..."
-    cat <<EOF >/etc/systemd/system/ha-chromium-kiosk.service
+    cat <<EOF >/etc/systemd/system/kiosk.service
 [Unit]
 Description=Chromium Kiosk Mode for Home Assistant
 After=systemd-user-sessions.service network-online.target
@@ -410,7 +463,7 @@ User=$KIOSK_USER
 Group=$KIOSK_USER
 PAMName=login
 Environment=XDG_RUNTIME_DIR=/run/user/%U
-ExecStart=/usr/bin/xinit /usr/bin/openbox-session -- :0 vt7 -nolisten tcp -nocursor -auth /var/run/kiosk.auth
+ExecStart=/usr/bin/xinit /usr/bin/openbox-session -- :0 vt7 -nolisten tcp -auth /var/run/kiosk.auth
 Restart=always
 RestartSec=5
 StandardInput=tty
@@ -424,7 +477,7 @@ WantedBy=multi-user.target
 EOF
     
     systemctl daemon-reload
-    systemctl enable ha-chromium-kiosk.service
+    systemctl enable kiosk.service
     
     echo "Kiosk kullanıcısı tty grubuna ekleniyor..."
     usermod -aG tty $KIOSK_USER
@@ -445,22 +498,22 @@ uninstall_kiosk() {
     fi
     
     # Systemd hizmetini durdurun ve devre dışı bırakın
-    echo "ha-chromium-kiosk servisi durduruluyor ve devre dışı bırakılıyor..."
-    systemctl stop ha-chromium-kiosk.service && systemctl disable ha-chromium-kiosk.service
+    echo "kiosk servisi durduruluyor ve devre dışı bırakılıyor..."
+    systemctl stop kiosk.service && systemctl disable kiosk.service
     
     # Hizmetin durdurulup başarıyla devre dışı bırakılıp bırakılmadığını kontrol edin
     if [[ $? -ne 0 ]]; then
-        echo "ha-chromium-kiosk servisini durdurmak veya devre dışı bırakmak başarısız oldu. Lütfen manuel olarak kontrol edin."
+        echo "kiosk servisini durdurmak veya devre dışı bırakmak başarısız oldu. Lütfen manuel olarak kontrol edin."
         exit 1
     fi
     
     # systemd servis dosyasını kaldırın
     echo "Systemd servis dosyası kaldırılıyor..."
-    rm -f /etc/systemd/system/ha-chromium-kiosk.service
+    rm -f /etc/systemd/system/kiosk.service
     
     # Başlangıç ​​komut dosyasını kaldırın
     echo "Kiosk başlatma betiği kaldırılıyor..."
-    rm -f /usr/local/bin/ha-chromium-kiosk.sh
+    rm -f /usr/local/bin/kiosk.sh
     
     # Openbox için otomatik başlatma girişini kaldırın
     echo "Openbox otomatik başlatma yapılandırması kaldırılıyor..."
@@ -489,7 +542,7 @@ uninstall_kiosk() {
         echo "$installed_packages"
         
         prompt_user remove_packages "Kurulmuş paketleri kaldırmak istiyor musunuz? (E/h)" "E"
-        if [[ $remove_packages =~ ^[Ee]?$ ]]; then
+        if [[ $remove_packages =~ ^[Ee]$ || -z "$remove_packages" ]]; then
             echo "Kurulmuş paketler kaldırılıyor..."
             for pkg in $installed_packages; do
                 uninstall_package "$pkg"
