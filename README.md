@@ -1,7 +1,7 @@
 # Raspberry Pi Home Assistant İçin Kiosk Ekran Sistemi
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/Teklojik-Elektronik/kiosk/main/_assets/Kurulum.png" alt="Kiosk Ekran Sistemi" width="600">
+  <img src="https://raw.githubusercontent.com/Teklojik-Elektronik/kiosk/main/_assets/Ekran görüntüsü.png" alt="Kiosk Ekran Sistemi" width="600">
 </div>
 
 **Raspberry Pi Home Assistant Kiosk Ekran Sistemi** projesine hoş geldiniz! Bu proje, Raspberry Pi'nizi tam ekran Chromium tarayıcı çalıştıran bir kiosk'a dönüştürmek için kolay yapılandırılabilir bir sistem sunar. Özellikle Home Assistant arayüzünü sürekli görüntülemek için idealdir.
@@ -47,10 +47,15 @@ Geri bildirim ve pull request'leri teşvik ediyoruz!
    ```
 
 3. **Yapılandırma Adımlarını Takip Edin:**
-   - Home Assistant URL adresini girin (örn: https://homeassistant.local:8123)
-   - Home Assistant dashboard yolunu girin (varsayılan: lovelace/default_view)
-   - Home Assistant kiosk modunu etkinleştirmek isteyip istemediğinizi seçin
-   - Diğer seçenekleri tercihlerinize göre yapılandırın
+   - Paket listesini güncellemek ve kurulu paketleri yükseltmek isteyip istemediğinizi seçin
+   - Grafik ortamı için Wayland/labwc veya X11/Openbox kurulumunu seçin
+   - Chromium tarayıcısını kurun
+   - Fare imlecini gizlemek için unclutter kurulumunu yapılandırın
+   - Otomatik başlatma için display manager (greetd veya lightdm) kurulumunu yapın
+   - Chromium için otomatik başlatma betiği oluşturun:
+     - Home Assistant URL adresini girin (örn: https://homeassistant.local:8123)
+     - Medya akışı, SSL sertifikaları, güvensiz içerik ve gizli mod gibi seçenekleri yapılandırın
+   - Ekran çözünürlüğünü ayarlayın
 
 4. **Kurulum Tamamlandığında:**
    - Sistem otomatik olarak yeniden başlatılacak ve kiosk modu etkinleştirilecektir
@@ -64,21 +69,50 @@ Kiosk kurulumunu kaldırmak için aşağıdaki komutu çalıştırın:
 sudo ./kiosk_setup.sh uninstall
 ```
 
-Bu komut, tüm kiosk yapılandırmalarını kaldıracak ve sistemi orijinal durumuna geri döndürecektir.
+Kaldırma işlemi sırasında aşağıdaki seçenekleri yapılandırabilirsiniz:
+
+- Display manager'ları kaldırma (greetd ve lightdm)
+- Wayland/labwc paketlerini kaldırma
+- X11/Openbox paketlerini kaldırma
+- Chromium tarayıcısını kaldırma
+- Unclutter'ı kaldırma
+- Kiosk yapılandırma dosyalarını temizleme
+- Gereksiz paketleri temizleme
+
+Kaldırma işlemi tamamlandığında, sistemi yeniden başlatmanız önerilir.
 
 ## ⚙️ Yapılandırma Seçenekleri
 
 Kurulum sırasında aşağıdaki seçenekleri yapılandırabilirsiniz:
 
-- **Home Assistant URL**: Home Assistant sunucunuzun tam URL'si (http veya https)
-- **Dashboard Yolu**: Görüntülemek istediğiniz dashboard'un yolu (varsayılan: lovelace/default_view)
-- **Kiosk Modu**: Home Assistant kiosk modunu etkinleştirme (URL'ye ?kiosk=true ekler)
-- **Fare İmleci**: Fare imlecini gizleme seçeneği
-- **Medya Akışı**: Sahte UI ve sahte cihaz seçenekleri (kamera/mikrofon izinleri için)
-- **SSL Sertifikaları**: SSL sertifika hatalarını yoksayma seçeneği
-- **Güvensiz İçerik**: HTTPS üzerinden HTTP içeriğine izin verme seçeneği
-- **Güvensiz Kaynaklar**: Belirli güvensiz kaynakları güvenli olarak işaretleme seçeneği
-- **Gizli Mod**: Chromium'u gizli modda çalıştırma seçeneği
+- **Paket Yönetimi**:
+  - Paket listesini güncelleme
+  - Kurulu paketleri yükseltme
+
+- **Grafik Ortamı**:
+  - Wayland/labwc veya X11/Openbox seçimi
+  - Chromium tarayıcısı kurulumu
+
+- **Fare İmleci**:
+  - Unclutter ile fare imlecini gizleme
+  - İmlecin gizlenmesi için bekleme süresini ayarlama
+
+- **Otomatik Başlatma**:
+  - Wayland için greetd veya X11 için lightdm kurulumu
+  - Otomatik giriş yapılandırması
+
+- **Chromium Yapılandırması**:
+  - Home Assistant URL'si (http veya https)
+  - Dashboard yolu (varsayılan: lovelace/default_view)
+  - Kiosk modu (URL'ye ?kiosk=true ekler)
+  - Medya akışı için sahte UI ve sahte cihaz seçenekleri
+  - SSL sertifika hatalarını yoksayma
+  - HTTPS üzerinden HTTP içeriğine izin verme
+  - Belirli güvensiz kaynakları güvenli olarak işaretleme
+  - Gizli mod kullanımı
+
+- **Ekran Ayarları**:
+  - Ekran çözünürlüğünü ayarlama (1920x1080, 1280x720, vb.)
 
 ## 📝 Notlar
 
@@ -86,6 +120,7 @@ Kurulum sırasında aşağıdaki seçenekleri yapılandırabilirsiniz:
 - Chromium tarayıcısı kiosk modunda başlatılır ve Home Assistant dashboard'unuzu tam ekran gösterir.
 - Ekran koruyucu devre dışı bırakılır, böylece ekran her zaman açık kalır.
 - Sistem, Home Assistant'a erişilebilir olup olmadığını kontrol eder ve erişilebilir olana kadar bekler.
+- **Not**: Wayland/labwc seçildiğinde fare imleci gizleme özelliği şu anda tam olarak çalışmamaktadır. Bu özellik üzerinde çalışmalar devam etmektedir.
 
 ## 🤝 Katkıda Bulunma
 
