@@ -44,7 +44,7 @@ KIOSK_CONFIG_DIR="$CONFIG_DIR/kiosk"
 OPENBOX_CONFIG_DIR="$CONFIG_DIR/openbox"
 DEFAULT_HA_PORT="8123"
 DEFAULT_HA_DASHBOARD_PATH="lovelace/default_view"
-PKGS_NEEDED=(xorg openbox chromium xserver-xorg xinit unclutter curl)
+PKGS_NEEDED=(xorg openbox chromium xserver-xorg xinit unclutter curl netcat-openbsd)
 
 ## FONKSİYONLAR ##
 
@@ -344,104 +344,221 @@ EOF
     
     # Kiosk başlatma betiğini oluşturun
     echo "Kiosk başlatma betiği oluşturuluyor..."
-    cat <<EOF >/usr/local/bin/kiosk.sh
+    
+    # URL'den host, port ve protokol bilgilerini çıkar
+    HOST=$(echo "$KIOSK_BASE_URL" | sed -E 's|^https?://([^:/]+).*|\1|')
+    PORT=$(echo "$KIOSK_BASE_URL" | grep -o ':[0-9]\+' | grep -o '[0-9]\+')
+    PROTOCOL=$(echo "$KIOSK_BASE_URL" | grep -o '^https\?')
+    
+    # Port belirtilmemişse, protokole göre varsayılan port kullan
+    if [ -z "$PORT" ]; then
+        if [[ "$PROTOCOL" == "https" ]]; then
+            PORT=443
+        else
+            PORT=80
+        fi
+    fi
+    
+    echo "Çıkarılan bilgiler: Host=$HOST, Port=$PORT, Protocol=$PROTOCOL, URL=$KIOSK_URL"
+    
+    # Betik dosyasını oluştur - değişkenleri doğrudan ekle
+    cat > /usr/local/bin/kiosk.sh << EOF
 #!/bin/bash
 # Disable screen blanking
 xset s off
 xset -dpms
 xset s noblank
 
+# Sabit değişkenler
+HOST="$HOST"
+PORT="$PORT"
+KIOSK_URL="$KIOSK_URL"
+
 # İsteğe bağlı olarak fare imlecini gizleyin
 EOF
     
-    [[ $hide_cursor =~ ^[Ee]$ ]] && echo "unclutter -idle 0 &" >>/usr/local/bin/kiosk.sh
+    [[ $hide_cursor =~ ^[Ee]$ ]] && echo "unclutter -idle 0 &" >> /usr/local/bin/kiosk.sh
     
-    cat <<EOF >>/usr/local/bin/kiosk.sh
+    # Ağ kontrolü fonksiyonunu ekle
+    cat >> /usr/local/bin/kiosk.sh << EOF
+
+# Ağ kontrolü fonksiyonu
 check_network() {
-    # URL'yi parçalara ayır
-    local protocol=$(echo "$KIOSK_BASE_URL" | grep -oP '^(https?)')
-    local host=$(echo "$KIOSK_BASE_URL" | grep -oP '^https?://\K([^:/]+)')
-    local port=$(echo "$KIOSK_BASE_URL" | grep -oP '^https?://[^:/]+:\K([0-9]+)')
+    echo "Ağ kontrolü başlatılıyor..."
+    echo "Host: \$HOST, Port: \$PORT, URL: \$KIOSK_URL"
     
-    # Host bulunamadıysa, URL formatı hatalı olabilir
-    if [ -z "$host" ]; then
-        echo "Hata: URL'den host bilgisi çıkarılamadı. URL formatını kontrol edin."
-        echo "URL: $KIOSK_BASE_URL"
-        exit 1
+    # Host boşsa hata ver
+    if [ -z "\$HOST" ]; then
+        echo "Hata: Host bilgisi boş. URL formatını kontrol edin."
+        echo "URL: \$KIOSK_URL"
+        return 1
     fi
     
-    # Port belirtilmemişse, protokole göre varsayılan port kullan
-    if [ -z "$port" ]; then
-        if [[ "$protocol" == "https" ]]; then
-            port=443
+    # Ping ile temel bağlantıyı kontrol et
+    echo "Host'a ping gönderiliyor: \$HOST"
+    ping -c 1 "\$HOST" > /dev/null 2>&1
+    PING_RESULT=\$?
+    
+    if [ \$PING_RESULT -ne 0 ]; then
+        echo "Uyarı: Host'a ping gönderilemedi. Ağ bağlantınızı kontrol edin."
+        echo "Yine de devam ediliyor..."
+    else
+        echo "Host'a ping başarılı."
+    fi
+    
+    # Port kontrolü
+    echo "Port kontrolü: \$PORT"
+    
+    # nc veya curl ile port kontrolü
+    if command -v nc > /dev/null 2>&1; then
+        echo "nc komutu kullanılıyor..."
+        nc -z -w 5 "\$HOST" "\$PORT" > /dev/null 2>&1
+        NC_RESULT=\$?
+        
+        if [ \$NC_RESULT -ne 0 ]; then
+            echo "Uyarı: \$HOST:\$PORT'a bağlanılamadı."
+            echo "Chromium yine de başlatılacak, ancak Home Assistant'a erişilemeyebilir."
         else
-            port=80
+            echo "Port bağlantısı başarılı."
         fi
+    elif command -v curl > /dev/null 2>&1; then
+        echo "curl komutu kullanılıyor..."
+        curl -s --connect-timeout 5 "\$KIOSK_URL" > /dev/null 2>&1
+        CURL_RESULT=\$?
+        
+        if [ \$CURL_RESULT -ne 0 ]; then
+            echo "Uyarı: \$KIOSK_URL'ye bağlanılamadı."
+            echo "Chromium yine de başlatılacak, ancak Home Assistant'a erişilemeyebilir."
+        else
+            echo "URL bağlantısı başarılı."
+        fi
+    else
+        echo "Uyarı: nc veya curl komutu bulunamadı. Ağ kontrolü yapılamıyor."
+        echo "Chromium yine de başlatılacak."
     fi
     
-    echo "Ağ kontrolü: Host=$host, Port=$port"
-    
-    local max_attempts=30
-    local attempt=0
-    
-    while ! nc -z -w 5 "$host" "$port" 2>/dev/null; do
-        attempt=$((attempt + 1))
-        echo "Home Assistant'ın erişilebilir olup olmadığı kontrol ediliyor... ($attempt/$max_attempts)"
-        
-        if [ $attempt -ge $max_attempts ]; then
-            echo "Home Assistant'a $max_attempts denemeden sonra erişilemedi. Çıkılıyor..."
-            exit 1
-        fi
-        
-        sleep 2
-    done
+    return 0
 }
 
+# Ağ kontrolünü yap
 check_network
-echo "Home Assistant erişilebilir. Chromium başlatılıyor..."
 
-# Chromium komutunu oluştur
-CHROMIUM_CMD="chromium"
+# Chromium'u başlat
+echo "Chromium başlatılıyor..."
+
+# X sunucusunun çalıştığından emin ol
+if ! command -v xset > /dev/null 2>&1; then
+    echo "Uyarı: xset komutu bulunamadı. X sunucusu düzgün çalışmayabilir."
+fi
+
+# Chromium komutunu bul
+if command -v chromium > /dev/null 2>&1; then
+    CHROMIUM_CMD="chromium"
+elif command -v chromium-browser > /dev/null 2>&1; then
+    CHROMIUM_CMD="chromium-browser"
+else
+    echo "Hata: Chromium bulunamadı. Lütfen Chromium'un kurulu olduğundan emin olun."
+    echo "Alternatif olarak 'chromium-browser' paketini kurmayı deneyin:"
+    echo "sudo apt-get install chromium-browser"
+    exit 1
+fi
+
+echo "Chromium komutu: \$CHROMIUM_CMD"
 
 # Gizli mod parametresi
 EOF
     
+EOF
+
+    # Chromium parametrelerini ekle
     if [[ $USE_INCOGNITO =~ ^[Ee]$ ]]; then
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --incognito"' >>/usr/local/bin/kiosk.sh
+        cat >> /usr/local/bin/kiosk.sh << EOF
+# Gizli mod parametresi
+if [ "\$CHROMIUM_CMD" != "" ]; then
+    CHROMIUM_CMD="\$CHROMIUM_CMD --incognito"
+fi
+EOF
     else
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --user-data-dir=/home/'$KIOSK_USER'/.config/chromium-kiosk --password-store=basic"' >>/usr/local/bin/kiosk.sh
+        cat >> /usr/local/bin/kiosk.sh << EOF
+# Kullanıcı veri dizini parametresi
+if [ "\$CHROMIUM_CMD" != "" ]; then
+    CHROMIUM_CMD="\$CHROMIUM_CMD --user-data-dir=/home/$KIOSK_USER/.config/chromium-kiosk --password-store=basic"
+fi
+EOF
     fi
     
-    cat <<EOF >>/usr/local/bin/kiosk.sh
+    # Temel kiosk parametreleri
+    cat >> /usr/local/bin/kiosk.sh << EOF
 # Temel kiosk parametreleri
-CHROMIUM_CMD="\$CHROMIUM_CMD --noerrdialogs --disable-infobars --kiosk --disable-session-crashed-bubble --disable-features=TranslateUI --overscroll-history-navigation=0 --pull-to-refresh=2 --autoplay-policy=no-user-gesture-required"
-
-# Ek parametreleri ekle
+if [ "\$CHROMIUM_CMD" != "" ]; then
+    CHROMIUM_CMD="\$CHROMIUM_CMD --noerrdialogs --disable-infobars --kiosk --disable-session-crashed-bubble --disable-features=TranslateUI --overscroll-history-navigation=0 --pull-to-refresh=2 --autoplay-policy=no-user-gesture-required"
+fi
 EOF
     
+    # Ek parametreleri ekle
     if [[ $USE_FAKE_UI =~ ^[Ee]$ ]]; then
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --use-fake-ui-for-media-stream"' >>/usr/local/bin/kiosk.sh
+        cat >> /usr/local/bin/kiosk.sh << EOF
+# Sahte UI parametresi
+if [ "\$CHROMIUM_CMD" != "" ]; then
+    CHROMIUM_CMD="\$CHROMIUM_CMD --use-fake-ui-for-media-stream"
+fi
+EOF
     fi
     
     if [[ $USE_FAKE_DEVICE =~ ^[Ee]$ ]]; then
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --use-fake-device-for-media-stream"' >>/usr/local/bin/kiosk.sh
+        cat >> /usr/local/bin/kiosk.sh << EOF
+# Sahte cihaz parametresi
+if [ "\$CHROMIUM_CMD" != "" ]; then
+    CHROMIUM_CMD="\$CHROMIUM_CMD --use-fake-device-for-media-stream"
+fi
+EOF
     fi
     
     if [[ $IGNORE_CERT_ERRORS =~ ^[Ee]$ ]]; then
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --ignore-certificate-errors"' >>/usr/local/bin/kiosk.sh
+        cat >> /usr/local/bin/kiosk.sh << EOF
+# Sertifika hatalarını yoksayma parametresi
+if [ "\$CHROMIUM_CMD" != "" ]; then
+    CHROMIUM_CMD="\$CHROMIUM_CMD --ignore-certificate-errors"
+fi
+EOF
     fi
     
     if [[ $ALLOW_INSECURE =~ ^[Ee]$ ]]; then
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --allow-running-insecure-content"' >>/usr/local/bin/kiosk.sh
+        cat >> /usr/local/bin/kiosk.sh << EOF
+# Güvensiz içeriğe izin verme parametresi
+if [ "\$CHROMIUM_CMD" != "" ]; then
+    CHROMIUM_CMD="\$CHROMIUM_CMD --allow-running-insecure-content"
+fi
+EOF
     fi
     
     if [[ $TREAT_INSECURE =~ ^[Ee]$ ]] && [ -n "$INSECURE_ORIGIN" ]; then
-        echo 'CHROMIUM_CMD="$CHROMIUM_CMD --unsafely-treat-insecure-origin-as-secure='$INSECURE_ORIGIN'"' >>/usr/local/bin/kiosk.sh
+        cat >> /usr/local/bin/kiosk.sh << EOF
+# Güvensiz kaynakları güvenli olarak işaretleme parametresi
+if [ "\$CHROMIUM_CMD" != "" ]; then
+    CHROMIUM_CMD="\$CHROMIUM_CMD --unsafely-treat-insecure-origin-as-secure=$INSECURE_ORIGIN"
+fi
+EOF
     fi
     
-    cat <<EOF >>/usr/local/bin/kiosk.sh
+    # URL ekle ve çalıştır
+    cat >> /usr/local/bin/kiosk.sh << EOF
 # URL ekle ve çalıştır
-\$CHROMIUM_CMD "$KIOSK_URL"
+if [ "\$CHROMIUM_CMD" != "" ]; then
+    echo "Chromium başlatılıyor: \$CHROMIUM_CMD \"\$KIOSK_URL\""
+    
+    # Hata ayıklama için çıktıları bir dosyaya yönlendir
+    \$CHROMIUM_CMD "\$KIOSK_URL" > /tmp/chromium.log 2>&1 || {
+        echo "Chromium başlatılamadı. Hata günlüğü: /tmp/chromium.log"
+        # 30 saniye bekle ve tekrar dene
+        sleep 30
+        echo "Chromium yeniden başlatılıyor..."
+        \$CHROMIUM_CMD "\$KIOSK_URL" > /tmp/chromium_retry.log 2>&1
+    }
+else
+    echo "Hata: Chromium komutu bulunamadı."
+    exit 1
+fi
 EOF
     
     chmod +x /usr/local/bin/kiosk.sh
@@ -463,7 +580,7 @@ User=$KIOSK_USER
 Group=$KIOSK_USER
 PAMName=login
 Environment=XDG_RUNTIME_DIR=/run/user/%U
-ExecStart=/usr/bin/xinit /usr/bin/openbox-session -- :0 vt7 -nolisten tcp -auth /var/run/kiosk.auth
+ExecStart=/bin/bash -c 'export DISPLAY=:0; /usr/bin/xinit /usr/bin/openbox-session -- :0 vt7 -nolisten tcp -auth /var/run/kiosk.auth'
 Restart=always
 RestartSec=5
 StandardInput=tty
