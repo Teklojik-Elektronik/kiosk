@@ -1,714 +1,516 @@
 #!/bin/bash
-###################################################################################
-# HA Chromium Kiosk Kurulum ve Kaldırma Betiği
-# Yazar: muratnazikgul@teklojik.com (muratnazikgul@teklojik.com)
-# URL: https://github.com/Teklojik-Elektronik/kiosk
-#
-# Bu komut dosyası, bir ekran yöneticisi kullanmadan özellikle Home Assistant panoları için
-# Debian sunucusuna hafif bir Chromium tabanlı kiosk modu yükler ve kaldırır
-#
-# İlave olarak eğer homeassistanızda https://github.com/TECH7Fox/sip-hass-card sip card kullanmak
-# isterseniz sertifika sorunlarını alt etmek için sip sunucunuzun kendinden imzalı sertifikalarını
-# otomatik kabul etme gibi bir kaç ek özellik eklenmiştir
-#
-# Raspberry ile test ortamında kurulumunda sip card kullanımı için medya akışı için sahte UI,
-# sahte cihaz(kamera/mikrofon) kullanma isteğe bağlı kurulabilir
-#
-# SSL sertifikalarını yoksayma
-# Güvensiz içeriğin çalışmasına izin verme
-# Güvensiz kaynakları güvenli olarak işaretleme
-# Chromium gizli modda çalıştırma özellikleri eklenerek sip cardı sorunsuz çalıştırabilirsiniz
-#
-# Apache Lisansı, Sürüm 2.0 (the "License") altında lisanslanmıştır;
-# bu dosyayı lisansa uygun olmadan kullanamazsınız.
-# Lisansın bir kopyasını şu adresten edinebilirsiniz:
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Yasalarca gerekli kılınmadığı veya yazılı olarak kabul edilmediği sürece,
-# bu lisans altında dağıtılan yazılım "OLDUĞU GİBİ",
-# HİÇBİR TÜRDEN AÇIK VEYA ZIMNİ GARANTİ OLMADAN dağıtılmaktadır.
-# Belirli izinler ve kısıtlamalar hakkında bilgi için lisansa bakın.
-#
-# Kullanım: sudo ./kiosk_setup.sh {install|uninstall}
-#               install - Kiosk kurulumunu yapar
-#               uninstall - Kiosk kurulumunu kaldırır 
-#                                                
-# Not: Bu betik herhangi bir garanti olmadan olduğu gibi sunulmuştur. Kendi sorumluluğunuzda kullanın.
-###################################################################################
-
-## GLOBAL DEĞİŞKENLER VE ÖN TANIMLAR ##
-KIOSK_USER="kiosk"
-CONFIG_DIR="/home/$KIOSK_USER/.config"
-KIOSK_CONFIG_DIR="$CONFIG_DIR/kiosk"
-OPENBOX_CONFIG_DIR="$CONFIG_DIR/openbox"
-DEFAULT_HA_PORT="8123"
-DEFAULT_HA_DASHBOARD_PATH="lovelace/default_view"
-PKGS_NEEDED=(xorg openbox chromium xserver-xorg xinit unclutter curl netcat-openbsd)
-
-## FONKSİYONLAR ##
+# Raspberry Pi Kiosk Display System Kurulum Betiği
+# Kurulum için güncel bir Raspberry Pi OS Bookworm gereklidir.
+# Raspberry Pi 5 ve Raspberry Pi 4 üzerinde test edilmiştir.
+# Kolay kullanım için Raspberry Pi Imager kullanın. Wi-Fi, SSH ve hostname ayarlarını yapın.
+# SD kartınızı hazırlayın.
+# Bu betiği çalışan Raspberry Pi sisteminize kopyalayın ve root olmayan bir kullanıcı olarak çalıştırın:
+# bash kiosk_setup.sh
+# Sürüm Geçmişi
+# 2024-10-22 v1.0: İlk sürüm
+# 2024-11-04 v1.1: Wayfire'dan labwc'ye geçiş
+# 2024-11-13 v1.2: wlr-randr kurulumu eklendi
+# 2024-11-20 v1.3: Chromium için detaylı yapılandırma seçenekleri eklendi
+# 2024-11-25 v1.4: Unclutter ve Chromium Css kurulumu eklendi
+# 2024-11-28 v1.5: Wayland için gelişmiş fare imleci gizleme desteği eklendi
 
 # Ek mesaj ile spinner görüntüleme fonksiyonu
 spinner() {
-    local pid=$1  # Arka plan işleminin PID'sini al
-    local message=$2  # Spinner ile gösterilecek mesajı al
-    local delay=0.1
-    local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")  # spinner kareleri
-    tput civis  # İmleci gizle
-    local i=0
-    while [ -d /proc/$pid ]; do  # İşlemin hala çalışıp çalışmadığını kontrol et
-        local frame=${frames[$i]}
-        printf "\r\e[35m%s\e[0m %s" "$frame" "$message"  # Spinner karesini mesajla birlikte yazdır
-        i=$(((i + 1) % ${#frames[@]}))
-        sleep $delay
-    done
-    printf "\r\e[32m✔\e[0m %s\n" "$message"  # İşlem tamamlandığında yeşil onay işareti göster
-    tput cnorm  # İmleci geri getir
+local pid=$1  # Arka plan işleminin PID'sini al
+local message=$2  # Spinner ile gösterilecek mesajı al
+local delay=0.1
+local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")  # spinner kareleri
+tput civis  # İmleci gizle
+local i=0
+while [ -d /proc/$pid ]; do  # İşlemin hala çalışıp çalışmadığını kontrol et
+local frame=${frames[$i]}
+printf "\r\e[35m%s\e[0m %s" "$frame" "$message"  # Spinner karesini mesajla birlikte yazdır
+i=$(((i + 1) % ${#frames[@]}))
+sleep $delay
+done
+printf "\r\e[32m✔\e[0m %s\n" "$message"  # İşlem tamamlandığında yeşil onay işareti göster
+tput cnorm  # İmleci geri getir
 }
+
+# Betiğin root olarak çalıştırılıp çalıştırılmadığını kontrol et, doğruysa çık
+if [ "$(id -u)" -eq 0 ]; then
+echo "Bu betik root olarak çalıştırılmamalıdır. Lütfen sudo yetkilerine sahip normal bir kullanıcı olarak çalıştırın."
+exit 1
+fi
+
+# Geçerli kullanıcıyı belirle
+CURRENT_USER=$(whoami)
+
+# Wayland kullanılıyor mu kontrolü için değişken
+USE_WAYLAND=false
 
 # Kullanıcıya evet/hayır sorusu soran fonksiyon
 ask_user() {
-    local prompt="$1"
-    while true; do
-        read -p "$prompt [e/h]: " yn
-        case $yn in
-            [Ee]* ) return 0;;  # Evet için 0 (başarılı) dön
-            [Hh]* ) return 1;;  # Hayır için 1 (başarısız) dön
-            * ) echo "Lütfen e veya h yazın.";;
-        esac
-    done
-}
-
-# Yazdırma kullanımı
-print_usage() {
-    echo "Usage: sudo $0 {install|uninstall}"
-    exit 1
-}
-
-# Banner'ı yazdır
-print_banner() {
-    echo "****************************************************************************************************"
-    echo "               _______   _____   _   __   _        _____         _   _    _   __                    "
-    echo "              |__   __| |  ___| | | / /  | |      |  _  |       | | | |  | | / /                    "
-    echo "                 | |    | |__   | |/ /   | |      | | | |       | | | |  | |/ /                     "
-    echo "                 | |    |  __|  |   |    | |      | | | |   _   | | | |  |   |                      "
-    echo "                 | |    | |___  | |\ \   | |___   | |_| |  | |__| | | |  | |\ \                     "
-    echo "                 |_|    |_____| |_| \_\  |_____|  |_____|  |______| |_|  |_| \_\                    "
-    echo "                                                                                                    "
-    echo "                                                                                                    "
-    echo "                        TEKLOJİK kiosk Kurulum ve Kaldırma Betiği                                   "
-    echo "                                                                                                    "
-    echo "****************************************************************************************************"
-    echo "***                               UYARI: KENDİ SORUMLULUĞUNUZDA KULLANIN                         ***"
-    echo "****************************************************************************************************"
-    echo "                                                                                                    "
-    echo "* Bu betik TEKLOJİK kiosk kurulumunu yapacak veya kaldıracaktır.                                    "
-    echo "* Lütfen ne yaptığını anlamak için betiği çalıştırmadan önce okuyun.                                "
-    echo "* Kendi sorumluluğunuzda kullanın. Yazar herhangi bir hasar veya veri kaybından sorumlu değildir.   "
-    echo "* Çıkmak için Ctrl+C tuşuna basın veya devam etmek için herhangi bir tuşa basın.                    "
-    read -n 1 -s
-}
-
-# Bir paket yükleyin ve beklerken noktaları yazdırın
-install_package() {
-    local package=$1
-    
-    echo -e "\e[90m$package kuruluyor, lütfen bekleyin...\e[0m"
-    # Her paket için apt-get update çalıştırmak yerine, install_packages fonksiyonunda bir kez çalıştıracağız
-    sudo apt-get install -y "$package" > /dev/null 2>&1 &
-    spinner $! "$package kuruluyor..."
-    
-    return $?
-}
-
-# Yüklenen paketi kaldırın ve beklerken noktaları yazdırın
-uninstall_package() {
-    local package=$1
-    
-    echo -e "\e[90m$package kaldırılıyor, lütfen bekleyin...\e[0m"
-    sudo apt-get remove --purge -y "$package" > /dev/null 2>&1 &
-    spinner $! "$package kaldırılıyor..."
-    
-    return $?
-}
-
-# Gerekli paketleri yükleyin
-# Daha sonra kaldırılmak üzere yüklenen paketlerin kaydını tutun
-install_packages() {
-    # Kiosk yapılandırma dizinini oluşturun
-    sudo -u $KIOSK_USER mkdir -p "$KIOSK_CONFIG_DIR"
-    
-    # Gerekli paketleri kurun ve neyin kurulduğunu takip edin
-    missing_pkgs=()
-    echo "Gerekli paketler kontrol ediliyor..."
-    
-    # Kontrol edilmesi gereken paketlerin bir listesini oluşturun
-    pkgs_list="${PKGS_NEEDED[*]}"
-    
-    # Tüm gerekli paketlerin kurulum durumunu aynı anda alın
-    dpkg_query_output=$(dpkg-query -W -f='${Package} ${Status}\n' $pkgs_list 2>/dev/null)
-    
-    for pkg in "${PKGS_NEEDED[@]}"; do
-        if ! echo "$dpkg_query_output" | grep -q "^$pkg install ok installed$"; then
-            missing_pkgs+=("$pkg")
-        fi
-    done
-    
-    if [ ${#missing_pkgs[@]} -ne 0 ]; then
-        echo "Eksik paketler kuruluyor..."
-        # Önce bir kez apt-get update çalıştır
-        echo "Paket listesi güncelleniyor..."
-        sudo apt-get update > /dev/null 2>&1
-        
-        total_pkgs=${#missing_pkgs[@]}
-        current_pkg=0
-        
-        for pkg in "${missing_pkgs[@]}"; do
-            current_pkg=$((current_pkg + 1))
-            echo -ne "Paket kuruluyor $current_pkg / $total_pkgs: $pkg "
-            if ! install_package "$pkg"; then
-                echo "Paket kurulumu başarısız: $pkg"
-                exit 1
-            fi
-            echo " Tamamlandı."
-        done
-        
-        echo "Tüm eksik paketler kuruldu."
-    else
-        echo "Tüm gerekli paketler zaten kurulu."
-    fi
-    
-    # Daha sonra kaldırılacak paketlerin listesini bir dosyaya kaydedin
-    # Dizinin var olduğundan emin ol
-    sudo -u $KIOSK_USER mkdir -p "$KIOSK_CONFIG_DIR"
-    echo "${missing_pkgs[*]}" > "$KIOSK_CONFIG_DIR/installed-packages"
-}
-
-# Yüklü paketleri kaldırın
-uninstall_packages() {
-    # Kurulu paketler dosyasının var olup olmadığını kontrol edin
-    if [ -f "$KIOSK_CONFIG_DIR/installed-packages" ]; then
-        installed_packages=$(< "$KIOSK_CONFIG_DIR/installed-packages")
-        if [ -n "$installed_packages" ]; then
-            echo "Kurulmuş paketler kaldırılıyor..."
-            
-            # Uninstall the packages and handle errors
-            if ! apt-get purge -y ${installed_packages[@]}; then
-                echo "Bazı paketler kaldırılamadı."
-                exit 1
-            fi
-            
-            if ! apt-get autoremove -y; then
-                echo "Gereksiz paketler kaldırılamadı."
-                exit 1
-            fi
-            
-            echo "Paketler başarıyla kaldırıldı."
-        else
-            echo "Kaldırılacak paket yok."
-        fi
-    else
-        echo "Kurulmuş paket listesi bulunamadı."
-    fi
-}
-
-# Kullanıcıyı kontrol edin ve oluşturun
-check_create_user() {
-    # KIOSK_USER'ın ayarlandığından emin olun
-    if [ -z "$KIOSK_USER" ]; then
-        echo "Kullanıcı adı belirtilmedi. Lütfen KIOSK_USER değişkenini ayarlayın."
-        exit 1
-    fi
-    
-    while id "$KIOSK_USER" &>/dev/null; do
-        # Mevcut kullanıcıyı kullanma veya yeni bir kullanıcı oluşturma istemi, varsayılan olarak mevcut kullanıcıyı kullan
-        read -p "Kiosk kullanıcısı zaten mevcut. Mevcut kullanıcıyı kullanmak ister misiniz? (E/h): " use_existing
-        use_existing=${use_existing:-E}
-        
-        if [[ $use_existing =~ ^[Ee]$ ]]; then
-            echo "Mevcut kullanıcı kullanılıyor."
-            return
-        elif [[ $use_existing =~ ^[Hh]$ ]]; then
-            read -p "Kiosk kullanıcısı için farklı bir kullanıcı adı girin: " KIOSK_USER
-            if [ -z "$KIOSK_USER" ]; then
-                echo "Kullanıcı adı boş olamaz. Lütfen geçerli bir kullanıcı adı girin."
-                continue
-            fi
-        else
-            echo "Geçersiz giriş. Lütfen E veya H girin."
-        fi
-    done
-    
-    echo "Kiosk kullanıcısı oluşturuluyor..."
-    if ! adduser --disabled-password --gecos "" "$KIOSK_USER" >/dev/null 2>&1; then
-        echo "Kiosk kullanıcısı oluşturulamadı. Çıkılıyor..."
-        exit 1
-    fi
-    
-    echo " Tamamlandı."
-}
-
-# Gerekirse kullanıcıyı kontrol edin ve kaldırın
-check_remove_user() {
-    if id "$KIOSK_USER" &>/dev/null; then
-        read -p "Kiosk kullanıcısı mevcut. Kullanıcıyı kaldırmak ister misiniz? (E/h): " remove_user
-        if [[ $remove_user =~ ^[Ee]$ || -z "$remove_user" ]]; then
-            echo "Kiosk kullanıcısı kaldırılıyor..."
-            userdel -rf "$KIOSK_USER"
-        else
-            echo "Kiosk kullanıcısı kaldırılmadı."
-        fi
-    else
-        echo "Kiosk kullanıcısı mevcut değil."
-    fi
-}
-
-# Kullanıcıya bilgi verme işlevi
-prompt_user() {
-    local var_name=$1
-    local prompt_message=$2
-    local default_value=$3
-    
-    read -p "$prompt_message [$default_value]: " value
-    value=${value:-$default_value}
-    
-    if [[ -z "$value" && -z "$default_value" ]]; then
-        echo "Hata: $var_name gerekli. Lütfen betiği tekrar çalıştırın."
-        exit 1
-    fi
-    
-    eval $var_name=\$value
-}
-
-# Kiosk kurulumunu kurun
-install_kiosk() {
-    # Gerekli girdiler için kullanıcıdan istemde bulunun
-    prompt_user KIOSK_BASE_URL "Home Assistant URL adresini girin (örn: https://homeassistant.local:8123)" ""
-    prompt_user KIOSK_DASHBOARD_PATH "Home Assistant dashboard yolunu girin (varsayılan: lovelace/default_view)" "lovelace/default_view"
-    
-    # URL ve dashboard path'i birleştir
-    # URL'nin sonunda / varsa kaldır
-    KIOSK_BASE_URL=${KIOSK_BASE_URL%/}
-    # Dashboard path'in başında / varsa kaldır
-    KIOSK_DASHBOARD_PATH=${KIOSK_DASHBOARD_PATH#/}
-    # İki değeri birleştir
-    KIOSK_URL="${KIOSK_BASE_URL}/${KIOSK_DASHBOARD_PATH}"
-    
-    # Kiosk modu ve imleç ayarları
-    prompt_user enable_kiosk "Home Assistant kiosk modunu etkinleştirmek ister misiniz? (URL'ye ?kiosk=true ekler) (E/h)" "E"
-    prompt_user hide_cursor "Fare imlecini gizlemek istiyor musunuz? (E/h)" "E"
-    
-    # Ek Chromium parametreleri için sorular
-    prompt_user USE_FAKE_UI "Medya akışı için sahte UI kullanmak ister misiniz? (kamera/mikrofon izinleri için) (E/h)" "H"
-    prompt_user USE_FAKE_DEVICE "Medya akışı için sahte cihaz kullanmak ister misiniz? (test amaçlı sahte kamera/mikrofon) (E/h)" "H"
-    prompt_user IGNORE_CERT_ERRORS "SSL sertifika hatalarını yoksaymak ister misiniz? (kendinden-imzalı sertifikalar için) (E/h)" "H"
-    prompt_user ALLOW_INSECURE "Güvensiz içeriğin çalışmasına izin vermek ister misiniz? (HTTPS üzerinden HTTP içeriği) (E/h)" "H"
-    
-    prompt_user TREAT_INSECURE "Güvensiz kaynakları güvenli olarak işaretlemek ister misiniz? (E/h)" "H"
-    if [[ $TREAT_INSECURE =~ ^[Ee]$ ]]; then
-        prompt_user INSECURE_ORIGIN "Güvenli olarak işaretlenecek kaynak URL'sini girin (örn: https://192.168.1.20:8089)" ""
-    fi
-    
-    # Gizli mod kullanımı
-    prompt_user USE_INCOGNITO "Chromium'u gizli modda çalıştırmak ister misiniz? (Hayır derseniz, oturum bilgileri saklanır) (E/h)" "E"
-    
-    # Kiosk modu parametresini ekle
-    if [[ $enable_kiosk =~ ^[Ee]$ ]]; then
-        # URL'de zaten bir soru işareti (?) varsa & ile, yoksa ? ile ekle
-        if [[ "$KIOSK_URL" == *\?* ]]; then
-            KIOSK_URL="${KIOSK_URL}&kiosk=true"
-        else
-            KIOSK_URL="${KIOSK_URL}?kiosk=true"
-        fi
-    fi
-    
-    echo "Home Assistant dashboard'unuz şu adreste görüntülenecek: $KIOSK_URL"
-    echo "Home Assistant URL için Chromium Kiosk Modu ayarlanıyor: $KIOSK_URL"
-    
-    # Otomatik oturum açmayı yapılandır
-    echo "Kiosk kullanıcısı için otomatik giriş yapılandırılıyor..."
-    mkdir -p /etc/systemd/system/getty@tty1.service.d
-    cat <<EOF >/etc/systemd/system/getty@tty1.service.d/override.conf
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --autologin $KIOSK_USER --noclear %I \$TERM
-Type=idle
-EOF
-    
-    systemctl daemon-reload
-    systemctl restart getty@tty1.service
-    
-    # Openbox'ı yapılandırın
-    echo "Kiosk kullanıcısı için Openbox yapılandırılıyor..."
-    sudo -u $KIOSK_USER mkdir -p $OPENBOX_CONFIG_DIR
-    
-    # Kiosk başlatma betiğini oluşturun
-    echo "Kiosk başlatma betiği oluşturuluyor..."
-    
-    # URL'den host, port ve protokol bilgilerini çıkar
-    HOST=$(echo "$KIOSK_BASE_URL" | sed -E 's|^https?://([^:/]+).*|\1|')
-    PORT=$(echo "$KIOSK_BASE_URL" | grep -o ':[0-9]\+' | grep -o '[0-9]\+')
-    PROTOCOL=$(echo "$KIOSK_BASE_URL" | grep -o '^https\?')
-    
-    # Port belirtilmemişse, protokole göre varsayılan port kullan
-    if [ -z "$PORT" ]; then
-        if [[ "$PROTOCOL" == "https" ]]; then
-            PORT=443
-        else
-            PORT=80
-        fi
-    fi
-    
-    echo "Çıkarılan bilgiler: Host=$HOST, Port=$PORT, Protocol=$PROTOCOL, URL=$KIOSK_URL"
-    
-    # Betik dosyasını oluştur - değişkenleri doğrudan ekle
-    cat > /usr/local/bin/kiosk.sh << EOF
-#!/bin/bash
-# Disable screen blanking
-xset s off
-xset -dpms
-xset s noblank
-
-# Sabit değişkenler
-HOST="$HOST"
-PORT="$PORT"
-KIOSK_URL="$KIOSK_URL"
-
-# İsteğe bağlı olarak fare imlecini gizleyin
-EOF
-    
-    [[ $hide_cursor =~ ^[Ee]$ ]] && echo "unclutter -idle 0 &" >> /usr/local/bin/kiosk.sh
-    
-    # Ağ kontrolü fonksiyonunu ekle
-    cat >> /usr/local/bin/kiosk.sh << EOF
-
-# Ağ kontrolü fonksiyonu
-check_network() {
-    echo "Ağ kontrolü başlatılıyor..."
-    echo "Host: \$HOST, Port: \$PORT, URL: \$KIOSK_URL"
-    
-    # Host boşsa hata ver
-    if [ -z "\$HOST" ]; then
-        echo "Hata: Host bilgisi boş. URL formatını kontrol edin."
-        echo "URL: \$KIOSK_URL"
-        return 1
-    fi
-    
-    # Ping ile temel bağlantıyı kontrol et
-    echo "Host'a ping gönderiliyor: \$HOST"
-    ping -c 1 "\$HOST" > /dev/null 2>&1
-    PING_RESULT=\$?
-    
-    if [ \$PING_RESULT -ne 0 ]; then
-        echo "Uyarı: Host'a ping gönderilemedi. Ağ bağlantınızı kontrol edin."
-        echo "Yine de devam ediliyor..."
-    else
-        echo "Host'a ping başarılı."
-    fi
-    
-    # Port kontrolü
-    echo "Port kontrolü: \$PORT"
-    
-    # nc veya curl ile port kontrolü
-    if command -v nc > /dev/null 2>&1; then
-        echo "nc komutu kullanılıyor..."
-        nc -z -w 5 "\$HOST" "\$PORT" > /dev/null 2>&1
-        NC_RESULT=\$?
-        
-        if [ \$NC_RESULT -ne 0 ]; then
-            echo "Uyarı: \$HOST:\$PORT'a bağlanılamadı."
-            echo "Chromium yine de başlatılacak, ancak Home Assistant'a erişilemeyebilir."
-        else
-            echo "Port bağlantısı başarılı."
-        fi
-    elif command -v curl > /dev/null 2>&1; then
-        echo "curl komutu kullanılıyor..."
-        curl -s --connect-timeout 5 "\$KIOSK_URL" > /dev/null 2>&1
-        CURL_RESULT=\$?
-        
-        if [ \$CURL_RESULT -ne 0 ]; then
-            echo "Uyarı: \$KIOSK_URL'ye bağlanılamadı."
-            echo "Chromium yine de başlatılacak, ancak Home Assistant'a erişilemeyebilir."
-        else
-            echo "URL bağlantısı başarılı."
-        fi
-    else
-        echo "Uyarı: nc veya curl komutu bulunamadı. Ağ kontrolü yapılamıyor."
-        echo "Chromium yine de başlatılacak."
-    fi
-    
-    return 0
-}
-
-# Ağ kontrolünü yap
-check_network
-
-# Chromium'u başlat
-echo "Chromium başlatılıyor..."
-
-# X sunucusunun çalıştığından emin ol
-if ! command -v xset > /dev/null 2>&1; then
-    echo "Uyarı: xset komutu bulunamadı. X sunucusu düzgün çalışmayabilir."
-fi
-
-# Chromium komutunu bul
-if command -v chromium > /dev/null 2>&1; then
-    CHROMIUM_CMD="chromium"
-elif command -v chromium-browser > /dev/null 2>&1; then
-    CHROMIUM_CMD="chromium-browser"
-else
-    echo "Hata: Chromium bulunamadı. Lütfen Chromium'un kurulu olduğundan emin olun."
-    echo "Alternatif olarak 'chromium-browser' paketini kurmayı deneyin:"
-    echo "sudo apt-get install chromium-browser"
-    exit 1
-fi
-
-echo "Chromium komutu: \$CHROMIUM_CMD"
-
-# Gizli mod parametresi
-EOF
-    
-EOF
-
-    # Chromium parametrelerini ekle
-    if [[ $USE_INCOGNITO =~ ^[Ee]$ ]]; then
-        cat >> /usr/local/bin/kiosk.sh << EOF
-# Gizli mod parametresi
-if [ "\$CHROMIUM_CMD" != "" ]; then
-    CHROMIUM_CMD="\$CHROMIUM_CMD --incognito"
-fi
-EOF
-    else
-        cat >> /usr/local/bin/kiosk.sh << EOF
-# Kullanıcı veri dizini parametresi
-if [ "\$CHROMIUM_CMD" != "" ]; then
-    CHROMIUM_CMD="\$CHROMIUM_CMD --user-data-dir=/home/$KIOSK_USER/.config/chromium-kiosk --password-store=basic"
-fi
-EOF
-    fi
-    
-    # Temel kiosk parametreleri
-    cat >> /usr/local/bin/kiosk.sh << EOF
-# Temel kiosk parametreleri
-if [ "\$CHROMIUM_CMD" != "" ]; then
-    CHROMIUM_CMD="\$CHROMIUM_CMD --noerrdialogs --disable-infobars --kiosk --disable-session-crashed-bubble --disable-features=TranslateUI --overscroll-history-navigation=0 --pull-to-refresh=2 --autoplay-policy=no-user-gesture-required"
-fi
-EOF
-    
-    # Ek parametreleri ekle
-    if [[ $USE_FAKE_UI =~ ^[Ee]$ ]]; then
-        cat >> /usr/local/bin/kiosk.sh << EOF
-# Sahte UI parametresi
-if [ "\$CHROMIUM_CMD" != "" ]; then
-    CHROMIUM_CMD="\$CHROMIUM_CMD --use-fake-ui-for-media-stream"
-fi
-EOF
-    fi
-    
-    if [[ $USE_FAKE_DEVICE =~ ^[Ee]$ ]]; then
-        cat >> /usr/local/bin/kiosk.sh << EOF
-# Sahte cihaz parametresi
-if [ "\$CHROMIUM_CMD" != "" ]; then
-    CHROMIUM_CMD="\$CHROMIUM_CMD --use-fake-device-for-media-stream"
-fi
-EOF
-    fi
-    
-    if [[ $IGNORE_CERT_ERRORS =~ ^[Ee]$ ]]; then
-        cat >> /usr/local/bin/kiosk.sh << EOF
-# Sertifika hatalarını yoksayma parametresi
-if [ "\$CHROMIUM_CMD" != "" ]; then
-    CHROMIUM_CMD="\$CHROMIUM_CMD --ignore-certificate-errors"
-fi
-EOF
-    fi
-    
-    if [[ $ALLOW_INSECURE =~ ^[Ee]$ ]]; then
-        cat >> /usr/local/bin/kiosk.sh << EOF
-# Güvensiz içeriğe izin verme parametresi
-if [ "\$CHROMIUM_CMD" != "" ]; then
-    CHROMIUM_CMD="\$CHROMIUM_CMD --allow-running-insecure-content"
-fi
-EOF
-    fi
-    
-    if [[ $TREAT_INSECURE =~ ^[Ee]$ ]] && [ -n "$INSECURE_ORIGIN" ]; then
-        cat >> /usr/local/bin/kiosk.sh << EOF
-# Güvensiz kaynakları güvenli olarak işaretleme parametresi
-if [ "\$CHROMIUM_CMD" != "" ]; then
-    CHROMIUM_CMD="\$CHROMIUM_CMD --unsafely-treat-insecure-origin-as-secure=$INSECURE_ORIGIN"
-fi
-EOF
-    fi
-    
-    # URL ekle ve çalıştır
-    cat >> /usr/local/bin/kiosk.sh << EOF
-# URL ekle ve çalıştır
-if [ "\$CHROMIUM_CMD" != "" ]; then
-    echo "Chromium başlatılıyor: \$CHROMIUM_CMD \"\$KIOSK_URL\""
-    
-    # Hata ayıklama için çıktıları bir dosyaya yönlendir
-    \$CHROMIUM_CMD "\$KIOSK_URL" > /tmp/chromium.log 2>&1 || {
-        echo "Chromium başlatılamadı. Hata günlüğü: /tmp/chromium.log"
-        # 30 saniye bekle ve tekrar dene
-        sleep 30
-        echo "Chromium yeniden başlatılıyor..."
-        \$CHROMIUM_CMD "\$KIOSK_URL" > /tmp/chromium_retry.log 2>&1
-    }
-else
-    echo "Hata: Chromium komutu bulunamadı."
-    exit 1
-fi
-EOF
-    
-    chmod +x /usr/local/bin/kiosk.sh
-    
-    echo "Kiosk betiğini başlatmak için Openbox yapılandırılıyor..."
-    echo "/usr/local/bin/kiosk.sh &" > $OPENBOX_CONFIG_DIR/autostart
-    
-    # systemd hizmetini oluşturun
-    echo "Systemd servisi oluşturuluyor..."
-    cat <<EOF >/etc/systemd/system/kiosk.service
-[Unit]
-Description=Chromium Kiosk Mode for Home Assistant
-After=systemd-user-sessions.service network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$KIOSK_USER
-Group=$KIOSK_USER
-PAMName=login
-Environment=XDG_RUNTIME_DIR=/run/user/%U
-ExecStart=/bin/bash -c 'export DISPLAY=:0; /usr/bin/xinit /usr/bin/openbox-session -- :0 vt7 -nolisten tcp -auth /var/run/kiosk.auth'
-Restart=always
-RestartSec=5
-StandardInput=tty
-TTYPath=/dev/tty7
-TTYReset=yes
-TTYVHangup=yes
-TTYVTDisallocate=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    
-    systemctl daemon-reload
-    systemctl enable kiosk.service
-    
-    echo "Kiosk kullanıcısı tty grubuna ekleniyor..."
-    usermod -aG tty $KIOSK_USER
-    
-    # Hemen yeniden başlatma istemi
-    prompt_user reboot_now "Kurulum tamamlandı. Şimdi yeniden başlatmak istiyor musunuz?" "E"
-    [[ $reboot_now =~ ^[Ee]$ ]] && { echo "Sistem yeniden başlatılıyor..."; reboot; } || echo "Kurulum tamamlandı. Lütfen sistemi hazır olduğunuzda manuel olarak yeniden başlatın."
-}
-
-# Kiosk kurulumunu kaldırın
-uninstall_kiosk() {
-    echo "Bu betik HA Chromium Kiosk'u kaldıracak ve ilgili tüm yapılandırmaları silecek."
-    prompt_user confirm "Devam etmek istediğinizden emin misiniz? (E/h)" "E"
-    
-    if [[ $confirm =~ ^[Hh]$ ]]; then
-        echo "Kaldırma işlemi iptal edildi."
-        exit 0
-    fi
-    
-    # Systemd hizmetini durdurun ve devre dışı bırakın
-    echo "kiosk servisi durduruluyor ve devre dışı bırakılıyor..."
-    systemctl stop kiosk.service && systemctl disable kiosk.service
-    
-    # Hizmetin durdurulup başarıyla devre dışı bırakılıp bırakılmadığını kontrol edin
-    if [[ $? -ne 0 ]]; then
-        echo "kiosk servisini durdurmak veya devre dışı bırakmak başarısız oldu. Lütfen manuel olarak kontrol edin."
-        exit 1
-    fi
-    
-    # systemd servis dosyasını kaldırın
-    echo "Systemd servis dosyası kaldırılıyor..."
-    rm -f /etc/systemd/system/kiosk.service
-    
-    # Başlangıç ​​komut dosyasını kaldırın
-    echo "Kiosk başlatma betiği kaldırılıyor..."
-    rm -f /usr/local/bin/kiosk.sh
-    
-    # Openbox için otomatik başlatma girişini kaldırın
-    echo "Openbox otomatik başlatma yapılandırması kaldırılıyor..."
-    if [[ -f $OPENBOX_CONFIG_DIR/autostart ]]; then
-        rm -f $OPENBOX_CONFIG_DIR/autostart
-    else
-        echo "Openbox otomatik başlatma yapılandırması bulunamadı."
-    fi
-    
-    # Otomatik oturum açma yapılandırmasını kaldırın
-    echo "Otomatik giriş yapılandırması kaldırılıyor..."
-    if [[ -f /etc/systemd/system/getty@tty1.service.d/override.conf ]]; then
-        rm -f /etc/systemd/system/getty@tty1.service.d/override.conf
-    else
-        echo "Otomatik giriş yapılandırması bulunamadı."
-    fi
-    
-    # Systemd yapılandırmasını yeniden yükle
-    echo "Systemd yapılandırması yeniden yükleniyor..."
-    systemctl daemon-reload
-    
-    # İsteğe bağlı olarak yüklü paketleri kaldırın
-    if [[ -f "$KIOSK_CONFIG_DIR/installed-packages" ]]; then
-        installed_packages=$(< "$KIOSK_CONFIG_DIR/installed-packages")
-        echo "Aşağıdaki paketler kurulmuştu:"
-        echo "$installed_packages"
-        
-        prompt_user remove_packages "Kurulmuş paketleri kaldırmak istiyor musunuz? (E/h)" "E"
-        if [[ $remove_packages =~ ^[Ee]$ || -z "$remove_packages" ]]; then
-            echo "Kurulmuş paketler kaldırılıyor..."
-            for pkg in $installed_packages; do
-                uninstall_package "$pkg"
-                # Check if package was removed successfully
-                if [[ $? -ne 0 ]]; then
-                    echo "Paket kaldırılamadı: $pkg. Lütfen manuel olarak kontrol edin."
-                else
-                    echo "Paket başarıyla kaldırıldı: $pkg."
-                fi
-            done
-        else
-            echo "Kurulmuş paketler kaldırılmadı."
-        fi
-    else
-        echo "Kurulmuş paket listesi bulunamadı."
-    fi
-    
-    echo "Kaldırma işlemi tamamlandı. HA Chromium Kiosk kurulumu kaldırıldı."
-}
-
-## SENARYO BURADA BAŞLIYOR
-
-# Komut dosyasının sudo ile çalıştırılıp çalıştırılmadığını kontrol edin
-if [ "$EUID" -ne 0 ]; then
-    echo "HATA: Bu betiğin root olarak çalıştırılması gerekiyor"
-    echo "sudo $0 ile yeniden çalıştırın"
-    exit 1
-fi
-
-print_banner
-
-# Argüman sağlanıp sağlanmadığını kontrol edin
-if [ -z "$1" ]; then
-    print_usage
-fi
-
-# Yükleme veya kaldırmayı işleyen ana betik mantığı
-case "$1" in
-    install)
-        check_create_user
-        install_packages
-        install_kiosk
-        ;;
-    uninstall)
-        uninstall_kiosk
-        uninstall_packages
-        check_remove_user
-        ;;
-    *)
-        print_usage
-        ;;
+local prompt="$1"
+while true; do
+read -p "$prompt [e/h]: " yn
+case $yn in
+[Ee]* ) return 0;;  # Evet için 0 (başarılı) dön
+[Hh]* ) return 1;;  # Hayır için 1 (başarısız) dön
+* ) echo "Lütfen e veya h yazın.";;
 esac
+done
+}
+
+# Paket listesini güncellemek ister misiniz?
+echo
+if ask_user "Paket listesini güncellemek ister misiniz?"; then
+echo -e "\e[90mPaket listesi güncelleniyor, lütfen bekleyin...\e[0m"
+sudo apt update > /dev/null 2>&1 &
+spinner $! "Paket listesi güncelleniyor..."
+fi
+
+# Kurulu paketleri yükseltmek ister misiniz?
+echo
+if ask_user "Kurulu paketleri yükseltmek ister misiniz?"; then
+echo -e "\e[90mKurulu paketler yükseltiliyor. BU BİRAZ ZAMAN ALABİLİR, lütfen bekleyin...\e[0m"
+sudo apt upgrade -y > /dev/null 2>&1 &
+spinner $! "Kurulu paketler yükseltiliyor..."
+fi
+
+# Wayland/labwc paketlerini kurmak ister misiniz?
+echo
+if ask_user "Wayland ve labwc paketlerini kurmak ister misiniz?"; then
+echo -e "\e[90mWayland paketleri kuruluyor, lütfen bekleyin...\e[0m"
+sudo apt install --no-install-recommends -y labwc wlr-randr seatd > /dev/null 2>&1 &
+spinner $! "Wayland paketleri kuruluyor..."
+    
+    # Wayland kullanılacağını belirt
+    USE_WAYLAND=true
+    
+    # labwc yapılandırma dosyasını oluştur
+    LABWC_CONFIG_DIR="/home/$CURRENT_USER/.config/labwc"
+    mkdir -p "$LABWC_CONFIG_DIR"
+    
+    # rc.xml dosyası oluştur veya güncelle
+    LABWC_RC_FILE="$LABWC_CONFIG_DIR/rc.xml"
+    
+    # rc.xml dosyası yoksa oluştur
+    if [ ! -f "$LABWC_RC_FILE" ]; then
+        # Temel bir rc.xml dosyası oluştur ve fare imleci gizleme ayarını ekle
+        cat > "$LABWC_RC_FILE" << EOL
+<?xml version="1.0"?>
+
+<labwc_config>
+  <core>
+    <gap>0</gap>
+  </core>
+
+  <seat>
+    <hide-cursor>3000</hide-cursor>
+  </seat>
+</labwc_config>
+EOL
+        echo -e "\e[32m✔\e[0m Labwc yapılandırma dosyası oluşturuldu ve fare imleci gizleme ayarı eklendi."
+    else
+        # Dosya varsa ve seat etiketi yoksa ekle
+        if ! grep -q "<seat>" "$LABWC_RC_FILE"; then
+            sed -i '/<\/labwc_config>/i \  <seat>\n    <hide-cursor>3000</hide-cursor>\n  </seat>' "$LABWC_RC_FILE"
+            echo -e "\e[32m✔\e[0m Labwc yapılandırma dosyasına fare imleci gizleme ayarı eklendi."
+        # Dosya varsa ve seat etiketi varsa ama hide-cursor yoksa ekle
+        elif ! grep -q "<hide-cursor>" "$LABWC_RC_FILE"; then
+            sed -i '/<seat>/a \    <hide-cursor>3000</hide-cursor>' "$LABWC_RC_FILE"
+            echo -e "\e[32m✔\e[0m Labwc yapılandırma dosyasına fare imleci gizleme ayarı eklendi."
+        else
+            echo -e "\e[33mLabwc yapılandırma dosyası zaten fare imleci gizleme ayarı içeriyor.\e[0m"
+        fi
+    fi
+fi
+
+# Chromium tarayıcısını kurmak ister misiniz?
+echo
+if ask_user "Chromium tarayıcısını kurmak ister misiniz?"; then
+echo -e "\e[90mChromium tarayıcısı kuruluyor, lütfen bekleyin...\e[0m"
+sudo apt install --no-install-recommends -y chromium-browser > /dev/null 2>&1 &
+spinner $! "Chromium tarayıcısı kuruluyor..."
+fi
+
+# Unclutter kurmak ister misiniz?
+# Fare imlecini gizlemek için araçlar kurmak ister misiniz?
+echo
+if ask_user "Fare imlecini gizlemek için unclutter kurmak ister misiniz?"; then
+    echo -e "\e[90mUnclutter kuruluyor, lütfen bekleyin...\e[0m"
+    sudo apt install -y unclutter > /dev/null 2>&1 &
+    spinner $! "Unclutter kuruluyor..."
+if ask_user "Fare imlecini gizlemek için araçlar kurmak ister misiniz?"; then
+    echo -e "\e[90mFare imleci gizleme araçları kuruluyor, lütfen bekleyin...\e[0m"
+
+# Kullanıcıdan imlecin gizlenmesi için bekleme süresini iste
+read -p "İmlecin gizlenmesi için kaç saniye hareketsiz kalması gerektiğini girin [varsayılan: 3]: " IDLE_TIME
+IDLE_TIME="${IDLE_TIME:-3}"
+
+    # Unclutter komutunu oluştur - Wayland için ek parametreler ekle
+    UNCLUTTER_CMD="unclutter --timeout $IDLE_TIME --fork"
+    # Wayland için wl-hide-cursor kur
+    if [ "$USE_WAYLAND" = true ]; then
+        echo -e "\e[90mWayland için fare imleci gizleme aracı kuruluyor...\e[0m"
+        sudo apt install -y wl-hide-cursor > /dev/null 2>&1 || true
+        
+        # Wayland için labwc autostart dosyasına wl-hide-cursor ekle
+        AUTOSTART_FILE="/home/$CURRENT_USER/.config/labwc/autostart"
+        mkdir -p "/home/$CURRENT_USER/.config/labwc"
+        
+        # wl-hide-cursor komutunu oluştur
+        WL_HIDE_CMD="wl-hide-cursor -t $IDLE_TIME &"
+        
+        # Dosyanın var olup olmadığını kontrol et ve wl-hide-cursor satırını güncelle veya ekle
+        if [ -f "$AUTOSTART_FILE" ] && grep -q "wl-hide-cursor" "$AUTOSTART_FILE" 2>/dev/null; then
+            # Mevcut wl-hide-cursor satırını yeni komutla değiştir
+            sed -i "/wl-hide-cursor/c\\$WL_HIDE_CMD" "$AUTOSTART_FILE"
+            echo -e "\e[32m✔\e[0m Mevcut wl-hide-cursor komutu güncellendi."
+        else
+            # Dosya yoksa veya wl-hide-cursor içermiyorsa, komutu ekle
+            echo "$WL_HIDE_CMD" >> "$AUTOSTART_FILE"
+            echo -e "\e[32m✔\e[0m wl-hide-cursor komutu labwc autostart dosyasına başarıyla eklendi!"
+        fi
+        
+        echo -e "\e[32m✔\e[0m Wayland için fare imleci gizleme aracı başarıyla kuruldu ve yapılandırıldı."
+    fi
+    
+    # Her durumda unclutter da kur (X11 uyumluluğu için)
+    echo -e "\e[90mX11 uyumlu fare imleci gizleme aracı kuruluyor...\e[0m"
+    sudo apt install -y unclutter > /dev/null 2>&1 &
+    spinner $! "Unclutter kuruluyor..."
+    
+    # Unclutter için eski ve daha uyumlu komutu oluştur
+    UNCLUTTER_CMD="unclutter -idle 0.1 -root &"
+
+    # Komutu .config/labwc/autostart dosyasına ekle (zaten yoksa)
+    # Komutu autostart dosyasına ekle
+AUTOSTART_FILE="/home/$CURRENT_USER/.config/labwc/autostart"
+mkdir -p "/home/$CURRENT_USER/.config/labwc"
+
+# Dosyanın var olup olmadığını kontrol et ve unclutter satırını güncelle veya ekle
+if [ -f "$AUTOSTART_FILE" ] && grep -q "unclutter" "$AUTOSTART_FILE" 2>/dev/null; then
+# Mevcut unclutter satırını yeni komutla değiştir
+sed -i "/unclutter/c\\$UNCLUTTER_CMD" "$AUTOSTART_FILE"
+echo -e "\e[32m✔\e[0m Mevcut unclutter komutu güncellendi."
+else
+# Dosya yoksa veya unclutter içermiyorsa, komutu ekle
+echo "$UNCLUTTER_CMD" >> "$AUTOSTART_FILE"
+        echo -e "\e[32m✔\e[0m Unclutter komutu labwc autostart dosyasına başarıyla eklendi!"
+    fi
+    
+    # Ayrıca alternatif bir yöntem olarak wl-hide-cursor'ı da kuralım
+    echo -e "\e[90mWayland için alternatif fare gizleme aracı kuruluyor...\e[0m"
+    sudo apt install -y wl-hide-cursor > /dev/null 2>&1 || true
+    
+    # wl-hide-cursor komutunu da autostart dosyasına ekle
+    WL_HIDE_CMD="wl-hide-cursor -t $IDLE_TIME &"
+    if ! grep -q "wl-hide-cursor" "$AUTOSTART_FILE" 2>/dev/null; then
+        echo "$WL_HIDE_CMD" >> "$AUTOSTART_FILE"
+        echo -e "\e[32m✔\e[0m wl-hide-cursor komutu labwc autostart dosyasına başarıyla eklendi!"
+        echo -e "\e[32m✔\e[0m Unclutter komutu autostart dosyasına başarıyla eklendi!"
+fi
+
+# Ayrıca Chromium için imleç gizleme CSS'si oluştur
+CHROMIUM_CSS_DIR="/home/$CURRENT_USER/.config/chromium-kiosk/Default/User StyleSheets"
+mkdir -p "$CHROMIUM_CSS_DIR"
+
+# CSS dosyasını oluştur
+cat > "$CHROMIUM_CSS_DIR/Custom.css" << EOL
+* {
+   cursor: none !important;
+}
+EOL
+    echo -e "\e[32m✔\e[0m Chromium için fare imleci gizleme CSS'i oluşturuldu."
+    
+    echo -e "\e[32m✔\e[0m Fare imleci gizleme araçları başarıyla kuruldu ve yapılandırıldı."
+
+    echo -e "\e[32m✔\e[0m Unclutter ve alternatif araçlar başarıyla kuruldu ve yapılandırıldı."
+    echo -e "\e[32m✔\e[0m Fare imleci $IDLE_TIME saniye hareketsiz kaldıktan sonra gizlenecek."
+    echo -e "\e[33mNot:\e[0m Wayland ile unclutter uyumsuzluğu olabilir. Sistem yeniden başlatıldıktan sonra çalışmazsa,"
+    echo -e "      alternatif olarak kurduğumuz wl-hide-cursor kullanılacaktır."
+    if [ "$USE_WAYLAND" = true ]; then
+        echo -e "\e[32m✔\e[0m Fare imleci $IDLE_TIME saniye hareketsiz kaldıktan sonra gizlenecek."
+        echo -e "\e[94mBilgi:\e[0m Wayland ortamında birden fazla fare gizleme yöntemi yapılandırıldı:"
+        echo -e "      1. labwc'nin kendi hide-cursor özelliği (rc.xml dosyasında)"
+        echo -e "      2. wl-hide-cursor aracı (autostart dosyasında)"
+        echo -e "      3. Chromium için CSS gizleme yöntemi"
+        echo -e "      4. Uyumluluk için unclutter (X11 için)"
+    else
+        echo -e "\e[32m✔\e[0m Fare imleci kısa bir süre hareketsiz kaldıktan sonra gizlenecek."
+        echo -e "\e[94mBilgi:\e[0m X11 ortamında unclutter ve Chromium CSS gizleme yöntemleri kullanılacak."
+    fi
+fi
+
+# greetd kurmak ve yapılandırmak ister misiniz?
+echo
+if ask_user "Labwc otomatik başlatması için greetd kurmak ve yapılandırmak ister misiniz?"; then
+# greetd kur
+echo -e "\e[90mLabwc otomatik başlatması için greetd kuruluyor, lütfen bekleyin...\e[0m"
+sudo apt install -y greetd > /dev/null 2>&1 &
+spinner $! "greetd kuruluyor..."
+
+# /etc/greetd/config.toml oluştur veya üzerine yaz
+echo -e "\e[90mconfig.toml oluşturuluyor veya üzerine yazılıyor...\e[0m"
+sudo mkdir -p /etc/greetd
+sudo bash -c "cat <<EOL > /etc/greetd/config.toml
+[terminal]
+vt = 7
+[default_session]
+command = \"/usr/bin/labwc\"
+user = \"$CURRENT_USER\"
+EOL"
+echo -e "\e[32m✔\e[0m config.toml başarıyla oluşturuldu veya üzerine yazıldı!"
+
+# greetd servisini etkinleştir ve grafik hedefini ayarla
+echo -e "\e[90mgreetd servisi etkinleştiriliyor...\e[0m"
+sudo systemctl enable greetd > /dev/null 2>&1 &
+spinner $! "greetd servisi etkinleştiriliyor..."
+
+echo -e "\e[90mVarsayılan olarak grafik hedefi ayarlanıyor...\e[0m"
+sudo systemctl set-default graphical.target > /dev/null 2>&1 &
+spinner $! "Grafik hedefi ayarlanıyor..."
+fi
+
+# labwc için otomatik başlatma betiği oluşturmak ister misiniz?
+echo
+if ask_user "Labwc için otomatik başlatma (chromium) betiği oluşturmak ister misiniz?"; then
+# Kullanıcıdan varsayılan URL iste
+read -p "Chromium'da açmak için URL'yi girin [varsayılan: https://webglsamples.org/aquarium/aquarium.html]: " USER_URL
+USER_URL="${USER_URL:-https://webglsamples.org/aquarium/aquarium.html}"
+
+# Ek Chromium parametreleri için sorular
+echo
+USE_FAKE_UI=false
+if ask_user "Medya akışı için sahte UI kullanmak ister misiniz? (kamera/mikrofon izinleri için)"; then
+USE_FAKE_UI=true
+fi
+
+USE_FAKE_DEVICE=false
+if ask_user "Medya akışı için sahte cihaz kullanmak ister misiniz? (test amaçlı sahte kamera/mikrofon)"; then
+USE_FAKE_DEVICE=true
+fi
+
+IGNORE_CERT_ERRORS=false
+if ask_user "SSL sertifika hatalarını yoksaymak ister misiniz? (öz-imzalı sertifikalar için)"; then
+IGNORE_CERT_ERRORS=true
+fi
+
+ALLOW_INSECURE=false
+if ask_user "Güvensiz içeriğin çalışmasına izin vermek ister misiniz? (HTTPS üzerinden HTTP içeriği)"; then
+ALLOW_INSECURE=true
+fi
+
+TREAT_INSECURE=false
+INSECURE_ORIGIN=""
+if ask_user "Güvensiz kaynakları güvenli olarak işaretlemek ister misiniz?"; then
+TREAT_INSECURE=true
+read -p "Güvenli olarak işaretlenecek kaynak URL'sini girin (örn: https://192.168.1.20:8089): " INSECURE_ORIGIN
+fi
+
+# Gizli mod kullanımı
+USE_INCOGNITO=true
+if ask_user "Chromium'u gizli modda çalıştırmak ister misiniz? (Hayır derseniz, oturum bilgileri saklanır)"; then
+USE_INCOGNITO=true
+else
+USE_INCOGNITO=false
+fi
+
+# Fare imlecini gizleme seçeneği
+HIDE_CURSOR=false
+if ask_user "Chromium'da fare imlecini gizlemek ister misiniz?"; then
+HIDE_CURSOR=true
+fi
+
+# Chromium komutunu oluştur
+CHROMIUM_CMD="/usr/bin/chromium-browser"
+
+# Gizli mod parametresi
+if [ "$USE_INCOGNITO" = true ]; then
+CHROMIUM_CMD="$CHROMIUM_CMD --incognito"
+else
+CHROMIUM_CMD="$CHROMIUM_CMD --user-data-dir=/home/$CURRENT_USER/.config/chromium-kiosk --password-store=basic"
+fi
+
+# Temel kiosk parametreleri
+CHROMIUM_CMD="$CHROMIUM_CMD --autoplay-policy=no-user-gesture-required --kiosk"
+
+# Ek parametreleri ekle
+if [ "$USE_FAKE_UI" = true ]; then
+CHROMIUM_CMD="$CHROMIUM_CMD --use-fake-ui-for-media-stream"
+fi
+
+if [ "$USE_FAKE_DEVICE" = true ]; then
+CHROMIUM_CMD="$CHROMIUM_CMD --use-fake-device-for-media-stream"
+fi
+
+if [ "$IGNORE_CERT_ERRORS" = true ]; then
+CHROMIUM_CMD="$CHROMIUM_CMD --ignore-certificate-errors"
+fi
+
+if [ "$ALLOW_INSECURE" = true ]; then
+CHROMIUM_CMD="$CHROMIUM_CMD --allow-running-insecure-content"
+fi
+
+if [ "$TREAT_INSECURE" = true ] && [ -n "$INSECURE_ORIGIN" ]; then
+CHROMIUM_CMD="$CHROMIUM_CMD --unsafely-treat-insecure-origin-as-secure=$INSECURE_ORIGIN"
+fi
+
+# Fare imlecini gizleme için CSS enjeksiyonu
+if [ "$HIDE_CURSOR" = true ]; then
+# CSS dosyasını oluştur
+CHROMIUM_CSS_DIR="/home/$CURRENT_USER/.config/chromium-kiosk/Default/User StyleSheets"
+mkdir -p "$CHROMIUM_CSS_DIR"
+
+cat > "$CHROMIUM_CSS_DIR/Custom.css" << EOL
+* {
+   cursor: none !important;
+}
+EOL
+echo -e "\e[32m✔\e[0m Chromium için fare imleci gizleme CSS'i oluşturuldu."
+
+# Ayrıca cursor parametresini ekle
+CHROMIUM_CMD="$CHROMIUM_CMD --disable-cursor-lock --disable-pointer-events"
+fi
+
+# URL ekle
+CHROMIUM_CMD="$CHROMIUM_CMD $USER_URL &"
+
+# config.toml oluştur veya üzerine yaz
+echo -e "\e[90mOtomatik başlatma dosyası oluşturuluyor veya üzerine yazılıyor...\e[0m"
+LABWC_AUTOSTART_DIR="/home/$CURRENT_USER/.config/labwc"
+mkdir -p "$LABWC_AUTOSTART_DIR"
+LABWC_AUTOSTART_FILE="$LABWC_AUTOSTART_DIR/autostart"
+
+# Chromium başlatma komutunu otomatik başlatma dosyasına ekle veya oluştur
+if grep -q "chromium" "$LABWC_AUTOSTART_FILE"; then
+# Mevcut Chromium satırını yeni komutla değiştir
+sed -i "/chromium-browser/c\\$CHROMIUM_CMD" "$LABWC_AUTOSTART_FILE"
+echo -e "\e[32m✔\e[0m Mevcut Chromium komutu güncellendi."
+else
+echo -e "\e[90mChromium'u labwc otomatik başlatma betiğine ekleme...\e[0m"
+echo "$CHROMIUM_CMD" >> "$LABWC_AUTOSTART_FILE"
+echo -e "\e[32m✔\e[0m Chromium komutu eklendi."
+fi
+
+# Otomatik başlatma dosyasının konumu hakkında geri bildirim sağla
+echo -e "\e[32m✔\e[0m labwc otomatik başlatma betiği $LABWC_AUTOSTART_FILE konumunda oluşturuldu veya güncellendi."
+echo -e "\e[94mEklenen Chromium komutu:\e[0m"
+echo -e "\e[93m$CHROMIUM_CMD\e[0m"
+fi
+
+# Plymouth splash screen kurmak ister misiniz?
+echo
+if ask_user "Plymouth splash screen kurmak ister misiniz?"; then
+# /boot/firmware/config.txt güncelle
+CONFIG_TXT="/boot/firmware/config.txt"
+if ! grep -q "disable_splash" "$CONFIG_TXT"; then
+echo -e "\e[90m$CONFIG_TXT dosyasına disable_splash=1 ekleniyor...\e[0m"
+sudo bash -c "echo 'disable_splash=1' >> $CONFIG_TXT"
+else
+echo -e "\e[33m$CONFIG_TXT zaten bir disable_splash seçeneği içeriyor. Değişiklik yapılmadı. Lütfen manuel olarak kontrol edin!\e[0m"
+fi
+
+# /boot/firmware/cmdline.txt güncelle
+CMDLINE_TXT="/boot/firmware/cmdline.txt"
+if ! grep -q "splash" "$CMDLINE_TXT"; then
+echo -e "\e[90m$CMDLINE_TXT dosyasına quiet splash plymouth.ignore-serial-consoles ekleniyor...\e[0m"
+sudo sed -i 's/$/ quiet splash plymouth.ignore-serial-consoles/' "$CMDLINE_TXT"
+else
+echo -e "\e[33m$CMDLINE_TXT zaten splash seçenekleri içeriyor. Değişiklik yapılmadı. Lütfen manuel olarak kontrol edin!\e[0m"
+fi
+
+# Plymouth ve temaları kur
+echo -e "\e[90mPlymouth ve temaları kuruluyor...\e[0m"
+sudo apt install -y plymouth plymouth-themes > /dev/null 2>&1 &
+spinner $! "Plymouth kuruluyor..."
+
+# Kullanılabilir temaları listele ve bir diziye kaydet
+echo -e "\e[90mKullanılabilir Plymouth temaları listeleniyor...\e[0m"
+readarray -t THEMES < <(plymouth-set-default-theme -l)  # Temaları bir diziye kaydet
+
+# Kullanıcıdan bir tema seçmesini iste
+echo -e "\e[94mLütfen bir tema seçin (numarayı girin):\e[0m"
+select SELECTED_THEME in "${THEMES[@]}"; do
+if [[ -n "$SELECTED_THEME" ]]; then
+echo -e "\e[90mPlymouth teması $SELECTED_THEME olarak ayarlanıyor...\e[0m"
+sudo plymouth-set-default-theme $SELECTED_THEME
+sudo update-initramfs -u > /dev/null 2>&1 &
+spinner $! "Initramfs güncelleniyor..."
+echo -e "\e[32m✔\e[0m Plymouth splash screen $SELECTED_THEME teması ile kuruldu ve yapılandırıldı."
+break
+else
+echo -e "\e[31mGeçersiz seçim, lütfen tekrar deneyin.\e[0m"
+fi
+done
+fi
+
+# Ekran çözünürlüğünü yapılandırmak ister misiniz?
+echo
+if ask_user "cmdline.txt ve labwc autostart dosyasında ekran çözünürlüğünü ayarlamak ister misiniz?"; then
+# edid-decode kurulu mu kontrol et; değilse kur
+if ! command -v edid-decode &> /dev/null; then
+echo -e "\e[90mGerekli araç kuruluyor, lütfen bekleyin...\e[0m"
+sudo apt install -y edid-decode > /dev/null 2>&1 &
+spinner $! "edid-decode kuruluyor..."
+echo -e "\e[32mGerekli araç başarıyla kuruldu!\e[0m"
+fi
+
+# edid-decode komutunun çıktısını yakala
+edid_output=$(sudo cat /sys/class/drm/card1-HDMI-A-1/edid | edid-decode)
+
+# Yenileme hızlarıyla biçimlendirilmiş çözünürlükleri saklamak için bir dizi başlat
+declare -a available_resolutions=()
+
+# Satırları döngüye al ve çözünürlük ve yenileme hızlarıyla zamanlama ara
+while IFS= read -r line; do
+# Established, Standard veya Detailed Timings formatına sahip satırları eşleştir
+if [[ "$line" =~ ([0-9]+)x([0-9]+)[[:space:]]+([0-9]+\.[0-9]+|[0-9]+)\ Hz ]]; then
+resolution="${BASH_REMATCH[1]}x${BASH_REMATCH[2]}"
+frequency="${BASH_REMATCH[3]}"
+# "genişlikxyükseklik@frekansHz" olarak biçimlendir
+formatted="${resolution}@${frequency}Hz"
+available_resolutions+=("$formatted")
+fi
+done <<< "$edid_output"
+
+# Hiç çözünürlük bulunamazsa varsayılan listeye geri dön
+if [ ${#available_resolutions[@]} -eq 0 ]; then
+echo -e "\e[33mHiç çözünürlük bulunamadı. Varsayılan liste kullanılıyor.\e[0m"
+available_resolutions=("1920x1080@60" "1280x720@60" "1024x768@60" "1600x900@60" "1366x768@60")
+fi
+
+# Kullanıcıdan bir çözünürlük seçmesini iste
+echo -e "\e[94mLütfen bir çözünürlük seçin (numarayı girin):\e[0m"
+select RESOLUTION in "${available_resolutions[@]}"; do
+if [[ -n "$RESOLUTION" ]]; then
+echo -e "\e[32m$RESOLUTION seçtiniz\e[0m"
+break
+else
+echo -e "\e[33mGeçersiz seçim, lütfen tekrar deneyin.\e[0m"
+fi
+done
+
+# Seçilen çözünürlüğü /boot/firmware/cmdline.txt dosyasına ekle (zaten yoksa)
+CMDLINE_FILE="/boot/firmware/cmdline.txt"
+if ! grep -q "video=" "$CMDLINE_FILE"; then
+echo -e "\e[90m$CMDLINE_FILE dosyasına video=HDMI-A-1:$RESOLUTION ekleniyor...\e[0m"
+sudo sed -i "1s/^/video=HDMI-A-1:$RESOLUTION /" "$CMDLINE_FILE"
+echo -e "\e[32m✔\e[0m Çözünürlük cmdline.txt dosyasına başarıyla eklendi!"
+else
+echo -e "\e[33mcmdline.txt zaten bir video girişi içeriyor. Değişiklik yapılmadı.\e[0m"
+fi
+
+# Komutu .config/labwc/autostart dosyasına ekle (zaten yoksa)
+AUTOSTART_FILE="/home/$CURRENT_USER/.config/labwc/autostart"
+if ! grep -q "wlr-randr --output HDMI-A-1 --mode $RESOLUTION" "$AUTOSTART_FILE"; then
+echo "wlr-randr --output HDMI-A-1 --mode $RESOLUTION" >> "$AUTOSTART_FILE"
+echo -e "\e[32m✔\e[0m Çözünürlük komutu labwc autostart dosyasına başarıyla eklendi!"
+else
+echo -e "\e[33mAutostart dosyası zaten bu çözünürlük komutunu içeriyor. Değişiklik yapılmadı.\e[0m"
+fi
+fi
+
+# apt önbelleğini temizle
+echo -e "\e[90mapt önbellekleri temizleniyor, lütfen bekleyin...\e[0m"
+sudo apt clean > /dev/null 2>&1 &
+spinner $! "apt önbellekleri temizleniyor..."
+
+# Tamamlanma mesajını yazdır
