@@ -455,6 +455,91 @@ EOL
         fi
     fi
     
+    # Plymouth açılış ve kapanış ekranını yapılandırma
+    echo
+    if ask_user "Açılış ve kapanış ekranını özelleştirmek için Plymouth kurmak ister misiniz?"; then
+        echo -e "\e[90mPlymouth kuruluyor ve yapılandırılıyor...\e[0m"
+        
+        # Plymouth paketlerini kur
+        sudo apt install -y plymouth plymouth-themes > /dev/null 2>&1 &
+        spinner $! "Plymouth paketleri kuruluyor..."
+        
+        # Mevcut temaları listele
+        echo -e "\e[94mMevcut Plymouth temaları:\e[0m"
+        plymouth-set-default-theme --list | nl
+        
+        # En popüler Plymouth temaları hakkında bilgi ver
+        echo -e "\e[94mEn popüler Plymouth temaları:\e[0m"
+        echo -e "1. \e[1mspinner\e[0m: Basit ve şık bir yükleme animasyonu (Raspberry Pi için en uygun)"
+        echo -e "2. \e[1mbgrt\e[0m: UEFI logo teması, sistem logosunu gösterir"
+        echo -e "3. \e[1mfade-in\e[0m: Yumuşak geçişli bir tema"
+        echo -e "4. \e[1mtribar\e[0m: Üç çubuklu yükleme animasyonu"
+        echo -e "5. \e[1mtext\e[0m: Sadece metin gösteren basit tema"
+        
+        # Kullanıcıdan tema seçmesini iste
+        read -p "Kullanmak istediğiniz temanın adını girin [varsayılan: spinner]: " THEME_NAME
+        THEME_NAME="${THEME_NAME:-spinner}"
+        
+        # Seçilen temayı ayarla
+        sudo plymouth-set-default-theme "$THEME_NAME" > /dev/null 2>&1 &
+        spinner $! "Plymouth teması '$THEME_NAME' olarak ayarlanıyor..."
+        
+        # initramfs'i güncelle
+        echo -e "\e[90minitramfs güncelleniyor...\e[0m"
+        sudo update-initramfs -u > /dev/null 2>&1 &
+        spinner $! "initramfs güncelleniyor..."
+        
+        # cmdline.txt dosyasını düzenle (Raspberry Pi için)
+        if [ -f "/boot/cmdline.txt" ]; then
+            # Yedek al
+            sudo cp "/boot/cmdline.txt" "/boot/cmdline.txt.bak"
+            echo -e "\e[32m✔\e[0m cmdline.txt yedeklendi."
+            
+            # quiet splash parametrelerini ekle (eğer yoksa)
+            if ! grep -q "quiet splash" "/boot/cmdline.txt"; then
+                # Mevcut içeriği al ve sonuna quiet splash ekle
+                CMDLINE=$(cat /boot/cmdline.txt)
+                echo "$CMDLINE quiet splash plymouth.ignore-serial-consoles" | sudo tee "/boot/cmdline.txt" > /dev/null
+                echo -e "\e[32m✔\e[0m cmdline.txt güncellendi, Plymouth parametreleri eklendi."
+            else
+                echo -e "\e[33mcmdline.txt zaten Plymouth parametrelerini içeriyor.\e[0m"
+            fi
+        else
+            echo -e "\e[33mUyarı: /boot/cmdline.txt dosyası bulunamadı. Plymouth boot parametreleri eklenemedi.\e[0m"
+        fi
+        
+        # Özel logo eklemek ister misiniz?
+        echo
+        if ask_user "Özel bir logo eklemek ister misiniz?"; then
+            # Logo dosyasının yolunu sor
+            read -p "Logo dosyasının tam yolunu girin (örn: /home/pi/logo.png): " LOGO_PATH
+            
+            if [ -f "$LOGO_PATH" ]; then
+                # Logo dosyasını Plymouth tema klasörüne kopyala
+                sudo cp "$LOGO_PATH" "/usr/share/plymouth/themes/$THEME_NAME/"
+                echo -e "\e[32m✔\e[0m Logo dosyası Plymouth tema klasörüne kopyalandı."
+                
+                # Tema yapılandırma dosyasını güncelle (tema yapısına bağlı olarak değişebilir)
+                if [ -f "/usr/share/plymouth/themes/$THEME_NAME/$THEME_NAME.plymouth" ]; then
+                    LOGO_FILENAME=$(basename "$LOGO_PATH")
+                    sudo sed -i "s|ImageDir=.*|ImageDir=/usr/share/plymouth/themes/$THEME_NAME|" "/usr/share/plymouth/themes/$THEME_NAME/$THEME_NAME.plymouth"
+                    sudo sed -i "s|ScaleHintImage=.*|ScaleHintImage=$LOGO_FILENAME|" "/usr/share/plymouth/themes/$THEME_NAME/$THEME_NAME.plymouth" 2>/dev/null || true
+                    echo -e "\e[32m✔\e[0m Plymouth tema yapılandırması güncellendi."
+                    
+                    # initramfs'i tekrar güncelle
+                    sudo update-initramfs -u > /dev/null 2>&1 &
+                    spinner $! "initramfs güncelleniyor..."
+                else
+                    echo -e "\e[33mUyarı: Plymouth tema yapılandırma dosyası bulunamadı. Logo ayarları yapılamadı.\e[0m"
+                fi
+            else
+                echo -e "\e[33mUyarı: Belirtilen logo dosyası bulunamadı: $LOGO_PATH\e[0m"
+            fi
+        fi
+        
+        echo -e "\e[32m✔\e[0m Plymouth kurulumu ve yapılandırması tamamlandı."
+    fi
+    
     echo -e "\e[1;32m=== Raspberry Pi Kiosk Kurulumu Tamamlandı ===\e[0m"
     echo -e "Sistemi yeniden başlatmanız önerilir. Şimdi yeniden başlatmak ister misiniz?"
     if ask_user "Sistemi şimdi yeniden başlatmak ister misiniz?"; then

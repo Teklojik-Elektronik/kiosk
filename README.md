@@ -22,6 +22,7 @@ Geri bildirim ve pull request'leri teşvik ediyoruz!
 - **Medya Akışı Desteği**: Test ortamı için sahte UI ve sahte cihaz (kamera/mikrofon) seçenekleri.
 - **Güvenli İçerik Yönetimi**: HTTPS üzerinden HTTP içeriğine izin verme ve güvensiz kaynakları güvenli olarak işaretleme seçenekleri.
 - **Gizli Mod Seçeneği**: Chromium'u gizli modda çalıştırma seçeneği.
+- **Özelleştirilebilir Açılış/Kapanış Ekranı**: Plymouth ile özel açılış ve kapanış ekranları.
 - **Kolay Kurulum ve Kaldırma**: Tek komutla kurulum ve kaldırma işlemleri.
 
 ## 📋 Gereksinimler
@@ -113,6 +114,16 @@ Kurulum sırasında aşağıdaki seçenekleri yapılandırabilirsiniz:
 
 - **Ekran Ayarları**:
   - Ekran çözünürlüğünü ayarlama (1920x1080, 1280x720, vb.)
+
+- **Uyku Modu Kontrolü**:
+  - Ekran koruyucuyu devre dışı bırakma
+  - Güç yönetimi ayarlarını devre dışı bırakma
+  - Sistem genelinde uyku modunu devre dışı bırakma
+
+- **Plymouth Açılış/Kapanış Ekranı**:
+  - Farklı temalar arasından seçim yapma (spinner, bgrt, fade-in, tribar, text vb.)
+  - Özel logo ekleme
+  - Boot parametrelerini yapılandırma
 
 ## 📝 Notlar
 
