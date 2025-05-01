@@ -1,7 +1,7 @@
 # Raspberry Pi Home Assistant İçin Kiosk Ekran Sistemi
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/Teklojik-Elektronik/kiosk/main/_assets/SampleTerminalOutput.png" alt="Kiosk Ekran Sistemi" width="600">
+  <img src="https://raw.githubusercontent.com/Teklojik-Elektronik/kiosk/main/_assets/Kurulum.png" alt="Kiosk Ekran Sistemi" width="600">
 </div>
 
 **Raspberry Pi Home Assistant Kiosk Ekran Sistemi** projesine hoş geldiniz! Bu proje, Raspberry Pi'nizi tam ekran Chromium tarayıcı çalıştıran bir kiosk'a dönüştürmek için kolay yapılandırılabilir bir sistem sunar. Özellikle Home Assistant arayüzünü sürekli görüntülemek için idealdir.
