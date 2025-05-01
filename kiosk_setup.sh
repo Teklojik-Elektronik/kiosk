@@ -1,3 +1,4 @@
+#!/bin/bash
 ###################################################################################
 # HA Chromium Kiosk Kurulum ve Kaldırma Betiği
 # Yazar: muratnazikgul@teklojik.com (muratnazikgul@teklojik.com)
