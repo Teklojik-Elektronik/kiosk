@@ -251,6 +251,8 @@ EOL
         
         # Temel kiosk parametreleri
         CHROMIUM_CMD="$CHROMIUM_CMD --autoplay-policy=no-user-gesture-required --kiosk"
+        CHROMIUM_CMD="$CHROMIUM_CMD --disable-pinch" # Dokunmatik/fare ile zoom özelliğini devre dışı bırakır
+        CHROMIUM_CMD="$CHROMIUM_CMD --disable-notifications" # Tüm bildirimleri (eklenti ve web sitesi) devre dışı bırakır
         
         # Ek parametreleri ekle
         if [ "$USE_FAKE_UI" = true ]; then
